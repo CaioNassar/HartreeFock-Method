@@ -92,8 +92,8 @@ class Atom:
             'p' : sel_p
         }
         
-        # Besides computating the GTOs for an especified atom, already reads
-        # the file and stores the data in the self.gaussians dictionary.
+        # Besides computating the GTOs for an especified atom, reads the file
+        # and stores the data in the self.gaussians dictionary.
         for orbital in ['s', 'p']:
             selection = self.sel[orbital]
 
