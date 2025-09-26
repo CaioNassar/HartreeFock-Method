@@ -2,11 +2,10 @@ import numpy as np
 
 class Geometry:
     """
-    The class Geometry stores the 3D coordinates and atomic composition of a molecule.
+    The class Geometry stores the 3D coordinates and atomic composition of the molecule.
 
     An instance of this class represents a molecule, reading its geometry.
     """
-
     atomic_number = {
     'H': 1, 'He': 2, 'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'Ne': 10,
     'Na': 11, 'Mg': 12, 'Al': 13, 'Si': 14, 'P': 15, 'S': 16, 'Cl': 17, 'Ar': 18, 'K': 19, 'Ca': 20,
@@ -84,7 +83,6 @@ class Atom:
         """
         Read the file and stores info (mainly the exponents and coefficients) for given orbital.
         
-        
         Args:
             orbital (str): The orbital itself (s, p, d or f).
 
@@ -141,14 +139,18 @@ class Atom:
         After reading, calculates the value of the GTOs.
         
         Args:
-            x, y, z (float): coordinates of the evaluation point.
+            x, y, z (float): coordinates of evaluation point.
             sel (int): select the contraction option.
             orbital (str): the orbital itself (s, p, d or f).
         
         Returns:
             float: The value of the contracted orbitals.
         """
-        self._read(f'{orbital}')
+        scan = self._read(orbital)
+
+        if not scan:
+            print('Something went wrong when trying to read the file')
+            return False
 
         data = self.gaussians[orbital]
         coef = []
