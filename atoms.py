@@ -1,6 +1,5 @@
 import numpy as np
 
-
 class Geometry:
     """
     The class Geometry stores the 3D coordinates and atomic composition of the molecule.
@@ -185,7 +184,6 @@ class Basis:
 
         data = self.gaussians[orbital]
         coef = []
-
         if 0 < sel <= data['options']:
             # Validates the selection.
             for c in data['coefficients']:
@@ -258,13 +256,11 @@ class ResultP:
         Returns the value for px orbital
         """
         return self.value * self._x
-
     def y(self):
         """
         Returns the value for py orbital
         """
         return self.value * self._y
-
     def z(self):
         """
         Returns the value for pz orbital
