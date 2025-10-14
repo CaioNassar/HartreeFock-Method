@@ -9,16 +9,16 @@ mol = Geometry(molecule_file, basis_file)
 elements = list(mol.atom.keys())
 print(elements)
 
-hydrogen_list = mol.atom['H']
-print(hydrogen_list)
-print(len(hydrogen_list))
+print(mol.atom['C']['basis'])
 
 
-third_carbon = mol.atom['C'][2]
+carbons = mol.atom['C']['instance']
+print(carbons)
+
+carbons_p = mol.atom['C']['basis']['p']
+print(carbons_p)
+
+third_carbon = mol.atom['C']['instance'][2]['GTO'].p(1, 0, 0.3).z()
 print(third_carbon)
-
-
-C_s = third_carbon['Data'].s(-1, 0, -0.753)
-print(C_s)
 
 print()
