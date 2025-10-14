@@ -2,7 +2,7 @@ import numpy as np
 
 class Geometry:
     """
-    The class Geometry stores the 3D coordinates and atomic composition of the molecule.
+    The class Geometry stores the 3D coordinates, atomic composition and basis set of the atoms of the molecule.
 
     An instance of this class represents a molecule, reading its geometry.
     """
@@ -32,36 +32,39 @@ class Geometry:
         """
         self.path_coord = path_coord
         self.path_basis = path_basis
-        self.atom = {}  # A dictionary to cache the data read from the coordinate file and from the basis set file.
-        self.n_elements = 0  # Types of elements in the molecule.
-        self.n_atoms = 0 # Number of atoms in the molecule.
+        self.atoms = {}  # A dictionary to cache the data read from the files.
 
-        # Reads the file of the atomic coordinates, sets self.atom and self.n_elements.
-        self._read_coordinates()
+        # Reads the file of the atomic coordinates, sets self.atoms.
+        first_read = self._read_coordinates()
         
         # Reads the file of the basis set and stores the data of the atom in the gaussians dictionary.
-        self._read_basis_set()
+        if first_read:    
+            second_read = self._read_basis_set()
 
-        # Loop through each element symbol and its atoms.
-        for symbol, element_list in self.atom.items():
-            # Loop through each atom in the element.
-            for atom_instance in element_list['instance']:
-                # Create a Basis object for this atom and add it to its dictionary.
-                atom_instance['GTO'] = Basis(atom_instance, element_list['basis'])
+        if first_read and second_read:
+            # Loop through each element symbol and its atoms.
+            for symbol, element_list in self.atoms.items():
+                # Loop through each atom in the element.
+                for atom_instance in element_list['instance']:
+                    # Create a Basis object for this atom and add it to the dictionary.
+                    atom_instance['GTO'] = Basis(atom_instance, element_list['basis'])
         
         
 
     def _read_coordinates(self):
         """
-        Reads the file and stores the center coordinates of each atom,
-        as well as its respective atomic number.
+        Reads the file and stores the center coordinates of each atom.
+
+        Return:
+            bool: True if the file was read successfully, False otherwise.
         """
+        
         try:
             with open(self.path_coord, 'r') as file:
                 lines = list(file)
-                self.n_atoms = int(lines[0])
+                number_atoms = int(lines[0])
 
-                for i in range(self.n_atoms):
+                for i in range(number_atoms):
                     l = lines[i+2].strip().split()
                     symbol = l[0]
                     atom_coord = {
@@ -70,31 +73,27 @@ class Geometry:
                         'Az': float(l[3])
                     }
                     # Stores the data for the current atom in the dictionary.
-
-                    if symbol not in self.atom:
-                        self.atom[symbol] = {
+                    if symbol not in self.atoms:
+                        self.atoms[symbol] = {
                             'basis' : {},
                             'instance' : [atom_coord]
                         }
-                        self.n_elements += 1
                     else:
-                        self.atom[symbol]['instance'].append(atom_coord)
+                        self.atoms[symbol]['instance'].append(atom_coord)
             return True
-        except FileNotFoundError:
-            print(f"Error: The file '{self.path}' wasn't found.")
+            
         except Exception as e:
+            # Exception if happens some error.
             print(f'Something went wrong when trying to read the file: {e}')
-
         return False
     
     def _read_basis_set(self):
         """
         Read the file and stores info for each different element in the molecule.
 
-        Returns:
-            bool: True if the file was read successfully or data was already cached, False otherwise.
+        Return:
+            bool: True if the file was read successfully, False otherwise.
         """
-        
 
         current_element = None
         try:
@@ -102,24 +101,22 @@ class Geometry:
                 lines_iterator = iter(file)
                 for line in lines_iterator:
                     line = line.strip()
-
                     if '/' in line and 'inline' in line:
-                        # Search the flag(/inline).
-                        
+                        # Search the flag(/inline) to read the basis set of an atom.
                         current_element = line.split()[0]
                         # Verifies if the chemical symbol is of interest.
-                        if current_element not in self.atom:
+                        if current_element not in self.atoms:
                             current_element = None
-                        
                         continue
 
                     if current_element and '-type' in line.lower():
-                        # Search the line that specifies the orbital type (e.g. 'S-type', 'p-type', etc.).
-                        # For each orbital, creates an key of gaussians dictionary
+                        # Searchs the line that specifies the orbital type (e.g. 'S-type', 'p-type', etc.).
+                        # For each orbital, creates an key of atoms dictionary
                         exp = []
                         coef = []
 
                         orbital = line.split()[1].lower().replace('-type', '')
+                        
                         functions_line = next(lines_iterator).strip().split()
                         num_functions = int(functions_line[0])
                         num_options = int(functions_line[1])
@@ -131,25 +128,22 @@ class Geometry:
                         for _ in range(num_functions):
                             coef.append(next(lines_iterator).strip().split())
                         
-                        self.atom[current_element]['basis'][orbital] = {
+                        self.atoms[current_element]['basis'][orbital] = {
                             'number_of_functions': num_functions,
                             'options': num_options,
                             'exponents': exp,
                             'coefficients': coef,
-                        } # Dictionary stores the parsed data.
-        
+                        } # Dictionary that stores the parsed data.
             return True
    
         except Exception as e:
             # Exception if happens some error.
             print(f'Something went wrong when trying to read the file: {e}')
-
         return False
-
 
 class Basis:
     """
-    The class Atom calculates Cartesians-Gaussians-Type Orbitals (GTOs).
+    The class Basis calculates Cartesians-Gaussians-Type Orbitals (GTOs).
 
     An instance of this class represents a single atom of the molecule.
     """
@@ -159,8 +153,8 @@ class Basis:
         Initializes the Atom object.
 
         Args:
-            center (dict): coordinates of the atom.
-            basis_data (dict): info about the basis set.
+            center (dict): center coordinates of the atom.
+            basis_data (dict): info about the basis set of the element.
         """
 
         self.Ax = center['Ax']
@@ -170,15 +164,16 @@ class Basis:
 
     def _calculate(self, x, y, z, sel, orbital):
         """
-        After reading, calculates the value of the GTOs and stores in the gaussians dictionary.
+        Calculates the value of the GTOs.
 
         Args:
             x, y, z (float): coordinates of evaluating point.
-            sel (int): select the contraction option.
+            sel (int): selects the contraction option.
             orbital (str): the orbital itself (s, p, d or f).
         """
 
-        data = self.basis[f'{orbital}']
+        data = self.basis[orbital]
+        exp = data['exponents']
         coef = []
         if 0 <= sel < data['options']:
             # Validates the selection.      
@@ -188,28 +183,26 @@ class Basis:
             raise ValueError(
                 f'This selection does not exist, choose from 0 to {data['options'] - 1}')
             # Raises if selected option is out of bounds.
-
-        exp = data['exponents']
+        
         contracted_value = 0.0
-
         r2 = (self.Ax - x)**2 + (self.Ay - y)**2 + (self.Az - z)**2
-
         # Calculate the squared distance from the atom's center.
+        
         for i in range(data['number_of_functions']):
             if coef[i] != 0.0:
                 # Skips calculation if the coefficient is zero.
                 contracted_value += float(coef[i]) * \
                     np.exp(-float(exp[i]) * r2)
                 # Sum of each primitive: C * e^(-a * r^2).
-
-        
         return contracted_value
 
     def s(self, x, y, z, sel=0):
         """
         Returns the value for s-orbital.
-
-        x, y, z (float): coordinates of evaluating point.
+        
+        Args:
+            x, y, z (float): coordinates of evaluating point.
+            sel (int): selects the contraction option.
         """
 
         return self._calculate(x, y, z, sel, 's')
@@ -217,9 +210,12 @@ class Basis:
     def p(self, x, y, z, sel=0):
         """
         Returns the value for p-orbitals.
-        Necessary to specify the axis of projection, ResultP object calculates for the determined component.
+        The _calculate function returns the radial part, so it's necessary to specify the axis of projection.
+        ResultP object calculates for the determined component.
 
-        x, y, z (float): coordinates of evaluating point.
+        Args:
+            x, y, z (float): coordinates of evaluating point.
+            sel (int): selects the contractiion option.
         """
         
         radial = self._calculate(x, y, z, sel, 'p')
@@ -250,11 +246,13 @@ class ResultP:
         Returns the value for px orbital
         """
         return self.value * self._x
+        
     def y(self):
         """
         Returns the value for py orbital
         """
         return self.value * self._y
+        
     def z(self):
         """
         Returns the value for pz orbital
