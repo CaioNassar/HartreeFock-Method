@@ -1,4 +1,5 @@
 import numpy as np
+from itertools import permutations, combinations, combinations_with_replacement
 
 class Geometry:
     """
@@ -33,15 +34,16 @@ class Geometry:
         self.path_coord = path_coord
         self.path_basis = path_basis
         self.atoms = {}  # A dictionary to cache the data read from the files.
+        self.n_atoms = 0 # Number of atoms in the element
 
         # Reads the file of the atomic coordinates, sets self.atoms.
-        first_read = self._read_coordinates()
+        first_file = self._read_coordinates()
         
         # Reads the file of the basis set and stores the data of the atom in the gaussians dictionary.
-        if first_read:    
-            second_read = self._read_basis_set()
+        if first_file:    
+            second_file = self._read_basis_set()
 
-        if first_read and second_read:
+        if first_file and second_file:
             # Loop through each element symbol and its atoms.
             for symbol, element_list in self.atoms.items():
                 # Loop through each atom in the element.
@@ -62,9 +64,9 @@ class Geometry:
         try:
             with open(self.path_coord, 'r') as file:
                 lines = list(file)
-                number_atoms = int(lines[0])
+                self.n_atoms = int(lines[0])
 
-                for i in range(number_atoms):
+                for i in range(self.n_atoms):
                     l = lines[i+2].strip().split()
                     symbol = l[0]
                     atom_coord = {
@@ -140,6 +142,35 @@ class Geometry:
             # Exception if happens some error.
             print(f'Something went wrong when trying to read the file: {e}')
         return False
+
+class Overlap:
+    def __init__(self, geometry):
+        self.geometry = geometry
+        self.dimension = geometry.n_atoms
+        self.matrix = []
+        
+        elements = list(self.geometry.atoms.keys())
+        elements_comb = combinations(elements, 2)
+        for elements_pair in elements_comb:
+            A_basis = self.geometry.atoms[elements_pair[0]]['basis']
+            B_basis = self.geometry.atoms[elements_pair[1]]['basis']
+            A_orbitals = list(A_basis.keys())
+            B_orbitals = list(B_basis.keys())
+            index_b = 0
+            last_index = 0
+            for i in range(len(A_orbitals)*len(B_orbitals)):
+                index_a = i//len(B_orbitals)
+                last_index = (i - 1)//len(B_orbitals)
+                if i > 0 and index_a != last_index:
+                    index_b = 0
+                f_a = A_basis[A_orbitals[index_a]]
+                f_b = B_basis[B_orbitals[index_b]]
+                self.matrix.append(self._integral(f_a,f_b))
+                index_b += 1
+                
+
+    def _integral(self, f1, f2):
+        return print(f1['exponents'], f2['exponents'])
 
 class Basis:
     """
