@@ -6,19 +6,19 @@ molecule_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Met
 
 mol = Geometry(molecule_file, basis_file)
 
-elements = list(mol.atom.keys())
+elements = list(mol.atoms.keys())
 print(elements)
 
-print(mol.atom['C']['basis'])
+print(mol.atoms['C']['basis'])
 
 
-carbons = mol.atom['C']['instance']
+carbons = mol.atoms['C']['instance']
 print(carbons)
 
-carbons_p = mol.atom['C']['basis']['p']
+carbons_p = mol.atoms['C']['basis']['p']
 print(carbons_p)
 
-third_carbon = mol.atom['C']['instance'][2]['GTO'].p(1, 0, 0.3).z()
+third_carbon = mol.atoms['C']['instance'][2]['GTO'].p(1, 0, 0.3).z()
 print(third_carbon)
 
 print()
