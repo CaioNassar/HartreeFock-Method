@@ -6,29 +6,40 @@ molecule_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Met
 
 mol = Geometry(molecule_file, basis_file)
 
-<<<<<<< HEAD
-
 elements = list(mol.atoms.keys())
 print(elements)
 
-
-lap = Overlap(mol)
-print(lap.dimension)
-=======
-elements = list(mol.atoms.keys())
-print(elements)
+print('-'*100)
 
 print(mol.atoms['C']['basis'])
 
+print('-'*100)
+
+lap = Overlap(mol)
+print(lap.matrix)
+
+print('-'*100)
+
+elements = list(mol.atoms.keys())
+print(elements)
+
+print('-'*100)
+
+print(mol.atoms['C']['basis'])
+
+print('-'*100)
 
 carbons = mol.atoms['C']['instance']
 print(carbons)
 
+print('-'*100)
+
 carbons_p = mol.atoms['C']['basis']['p']
 print(carbons_p)
 
+print('-'*100)
+
 third_carbon = mol.atoms['C']['instance'][2]['GTO'].p(1, 0, 0.3).z()
 print(third_carbon)
->>>>>>> 49f6dda29c2275a187dae06ff086eb6960a26057
 
 print()

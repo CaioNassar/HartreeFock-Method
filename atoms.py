@@ -158,19 +158,64 @@ class Overlap:
             B_orbitals = list(B_basis.keys())
             index_b = 0
             last_index = 0
-            for i in range(len(A_orbitals)*len(B_orbitals)):
-                index_a = i//len(B_orbitals)
-                last_index = (i - 1)//len(B_orbitals)
-                if i > 0 and index_a != last_index:
-                    index_b = 0
-                f_a = A_basis[A_orbitals[index_a]]
-                f_b = B_basis[B_orbitals[index_b]]
-                self.matrix.append(self._integral(f_a,f_b))
-                index_b += 1
+            index_a = 0
+            if len(A_orbitals) >= len(B_orbitals):
+                for i in range(len(A_orbitals)*len(B_orbitals)):
+                    index_a = i//len(B_orbitals)
+                    last_index = (i - 1)//len(B_orbitals)
+                    if i > 0 and index_a != last_index:
+                        index_b = 0
+                    f_a = A_basis[A_orbitals[index_a]]
+                    f_b = B_basis[B_orbitals[index_b]]
+                    self.matrix.append(self._integral(f_a,f_b, A_orbitals[index_a], B_orbitals[index_b]))
+                    index_b += 1
+            else:
+                for i in range(len(A_orbitals)*len(B_orbitals)):
+                    index_b = i//len(A_orbitals)
+                    last_index = (i - 1)//len(A_orbitals)
+                    if i > 0 and index_b != last_index:
+                        index_a = 0
+                    f_a = A_basis[A_orbitals[index_a]]
+                    f_b = B_basis[B_orbitals[index_b]]
+                    self.matrix.append(self._integral(f_a,f_b, A_orbitals[index_a], B_orbitals[index_b]))
+                    index_a += 1
                 
 
-    def _integral(self, f1, f2):
-        return print(f1['exponents'], f2['exponents'])
+    def _integral(self, f1, f2, o1, o2):
+        value = 0
+        if o1 == 's' and o2 == 's':
+            index_b = 0
+            last_index = 0
+            index_a = 0
+            if f1['number_of_functions'] >= f2['number_of_functions']:
+                for i in range(f1['number_of_functions']*f2['number_of_functions']):
+                    index_a = i//f2['number_of_functions']
+                    last_index = (i - 1)//f2['number_of_functions']
+                    if i > 0 and index_a != last_index:
+                        index_b = 0
+                    C_a = float(f1['coefficients'][index_a][0])
+                    C_b = float(f2['coefficients'][index_b][0])
+                    e_a = f1['exponents'][index_a]
+                    e_b = f2['exponents'][index_b]
+                    if C_a*C_b != 0:
+                        integral = C_a*C_b*np.sqrt(np.pi/(e_a+e_b))
+                        value += integral
+                    index_b += 1
+            else:
+                for i in range(f1['number_of_functions']*f2['number_of_functions']):
+                    index_b = i//f1['number_of_functions']
+                    last_index = (i - 1)//f1['number_of_functions']
+                    if i > 0 and index_b != last_index:
+                        index_a = 0
+                    C_a = float(f1['coefficients'][index_a][0])
+                    C_b = float(f2['coefficients'][index_b][0])
+                    e_a = f1['exponents'][index_a]
+                    e_b = f2['exponents'][index_b]
+                    if C_a*C_b != 0:
+                        integral = C_a*C_b*np.sqrt(np.pi/(e_a+e_b))
+                        value += integral
+                    index_a += 1
+        return float(value)
 
 class Basis:
     """
