@@ -1,5 +1,6 @@
 import numpy as np
-from itertools import permutations, combinations, combinations_with_replacement
+from math import  comb
+from scipy.special import factorial2
 
 class Geometry:
     """
@@ -22,6 +23,8 @@ class Geometry:
         'Ds': 110, 'Rg': 111, 'Cn': 112, 'Nh': 113, 'Fl': 114, 'Mc': 115, 'Lv': 116, 'Ts': 117, 'Og': 118
         # This class attribute maps chemical symbols to their respective atomic numbers.
     }
+
+    
 
     def __init__(self, path_coord, path_basis):
         """
@@ -120,19 +123,19 @@ class Geometry:
                         orbital = line.split()[1].lower().replace('-type', '')
                         
                         functions_line = next(lines_iterator).strip().split()
-                        num_functions = int(functions_line[0])
-                        num_options = int(functions_line[1])
+                        num_primitives = int(functions_line[0])
+                        num_contracted = int(functions_line[1])
 
                         # Parse exponents and coefficients.
-                        for _ in range(num_functions):
+                        for _ in range(num_primitives):
                             exp.append(float(next(lines_iterator).strip()))
 
-                        for _ in range(num_functions):
+                        for _ in range(num_primitives):
                             coef.append(next(lines_iterator).strip().split())
                         
                         self.atoms[current_element]['basis'][orbital] = {
-                            'number_of_functions': num_functions,
-                            'options': num_options,
+                            'number_of_primitives': num_primitives,
+                            'contracted_functions': num_contracted,
                             'exponents': exp,
                             'coefficients': coef,
                         } # Dictionary that stores the parsed data.
@@ -144,79 +147,146 @@ class Geometry:
         return False
 
 class Overlap:
+    Quantum_numbers = {
+    # l = 0
+    's': [(0, 0, 0)],  # s
+
+    # l = 1
+    'p': [(1, 0, 0),  # px
+          (0, 1, 0),  # py
+          (0, 0, 1)], # pz
+
+    # l = 2
+    'd': [(2, 0, 0),  # dxx
+          (0, 2, 0),  # dyy
+          (0, 0, 2),  # dzz
+          (1, 1, 0),  # dxy
+          (1, 0, 1),  # dxz
+          (0, 1, 1)], # dyz
+
+    # l = 3
+    'f': [(3, 0, 0),  # fxxx
+          (0, 3, 0),  # fyyy
+          (0, 0, 3),  # fzzz
+          (2, 1, 0),  # fxxy
+          (2, 0, 1),  # fxxz
+          (1, 2, 0),  # fxyy
+          (0, 2, 1),  # fyyz
+          (1, 0, 2),  # fxzz
+          (0, 1, 2),  # fyzz
+          (1, 1, 1)]  # fxyz
+    }
+
+
+
     def __init__(self, geometry):
         self.geometry = geometry
-        self.dimension = geometry.n_atoms
-        self.matrix = []
+
+        basis_functions = []
         
-        elements = list(self.geometry.atoms.keys())
-        elements_comb = combinations(elements, 2)
-        for elements_pair in elements_comb:
-            A_basis = self.geometry.atoms[elements_pair[0]]['basis']
-            B_basis = self.geometry.atoms[elements_pair[1]]['basis']
-            A_orbitals = list(A_basis.keys())
-            B_orbitals = list(B_basis.keys())
-            index_b = 0
-            last_index = 0
-            index_a = 0
-            if len(A_orbitals) >= len(B_orbitals):
-                for i in range(len(A_orbitals)*len(B_orbitals)):
-                    index_a = i//len(B_orbitals)
-                    last_index = (i - 1)//len(B_orbitals)
-                    if i > 0 and index_a != last_index:
-                        index_b = 0
-                    f_a = A_basis[A_orbitals[index_a]]
-                    f_b = B_basis[B_orbitals[index_b]]
-                    self.matrix.append(self._integral(f_a,f_b, A_orbitals[index_a], B_orbitals[index_b]))
-                    index_b += 1
-            else:
-                for i in range(len(A_orbitals)*len(B_orbitals)):
-                    index_b = i//len(A_orbitals)
-                    last_index = (i - 1)//len(A_orbitals)
-                    if i > 0 and index_b != last_index:
-                        index_a = 0
-                    f_a = A_basis[A_orbitals[index_a]]
-                    f_b = B_basis[B_orbitals[index_b]]
-                    self.matrix.append(self._integral(f_a,f_b, A_orbitals[index_a], B_orbitals[index_b]))
-                    index_a += 1
+        molecule = []
+        for symbol, data in self.geometry.atoms.items():
+            for center in data['instance']:
+                molecule.append({
+                    'center': center,
+                    'basis': data['basis']
+                })
                 
+        
+        for atom in molecule:
 
-    def _integral(self, f1, f2, o1, o2):
-        value = 0
-        if o1 == 's' and o2 == 's':
-            index_b = 0
-            last_index = 0
-            index_a = 0
-            if f1['number_of_functions'] >= f2['number_of_functions']:
-                for i in range(f1['number_of_functions']*f2['number_of_functions']):
-                    index_a = i//f2['number_of_functions']
-                    last_index = (i - 1)//f2['number_of_functions']
-                    if i > 0 and index_a != last_index:
-                        index_b = 0
-                    C_a = float(f1['coefficients'][index_a][0])
-                    C_b = float(f2['coefficients'][index_b][0])
-                    e_a = f1['exponents'][index_a]
-                    e_b = f2['exponents'][index_b]
-                    if C_a*C_b != 0:
-                        integral = C_a*C_b*np.sqrt(np.pi/(e_a+e_b))
-                        value += integral
-                    index_b += 1
+            for orbital, data in atom['basis'].items():
+                components = self.Quantum_numbers.get(orbital, [])
+                
+                for k in range(data['contracted_functions']):
+                    
+                    for (l, m, n) in components:
+                        
+                        function = {
+                            'center': atom['center'],
+                            'l': l,
+                            'm': m,
+                            'n': n,
+                            'primitives': [],
+                        }
+                        
+                        for i in range(data['number_of_primitives']):
+                            coef = float(data['coefficients'][i][k])
+                            if coef != 0.0: 
+                                function['primitives'].append({
+                                    'exponent': data['exponents'][i],
+                                    'coefficient': coef
+                                })
+                        
+                        basis_functions.append(function)
+
+        dimension = len(basis_functions)
+        self.matrix = np.zeros((dimension, dimension))
+        
+        for i in range(dimension):
+            for j in range(i, dimension):
+                
+                value = self._integral(basis_functions[i], basis_functions[j])
+                
+                self.matrix[i, j] = value
+                if i != j:
+                    self.matrix[j, i] = value 
+
+    def _integral(self, mi1, mi2):
+        value = 0.0
+        A = mi1['center']
+        B = mi2['center']
+
+        ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
+
+        for primitive1 in mi1['primitives']:
+            C_a = primitive1['coefficient']
+            alpha = primitive1['exponent']
+            
+            for primitive2 in mi2['primitives']:
+                C_b = primitive2['coefficient']
+                beta = primitive2['exponent']
+                gamma = alpha + beta
+
+                Px = (alpha*A['Ax'] + beta*B['Ax'])/gamma
+                Py = (alpha*A['Ay'] + beta*B['Ay'])/gamma
+                Pz = (alpha*A['Az'] + beta*B['Az'])/gamma
+                
+                Sx = self._S(mi1['l'], mi2['l'], A['Ax'] - Px, B['Ax'] - Px,gamma)
+                Sy = self._S(mi1['m'], mi2['m'], A['Ay'] - Py, B['Ay'] - Py,gamma)
+                Sz = self._S(mi1['n'], mi2['n'], A['Az'] - Pz, B['Az'] - Pz,gamma)
+                
+                
+                integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
+                
+                value += C_a*C_b*integral
+
+        return value
+
+    def _S(self, l, m, Pa, Pb, g):
+        value = 0.0
+        
+        for j in range((l + m)//2 + 1):
+            if j != 0:
+                value += self._f_j(l, m, Pa, Pb, 2*j) * factorial2(2*j - 1) / (2*g)**j
             else:
-                for i in range(f1['number_of_functions']*f2['number_of_functions']):
-                    index_b = i//f1['number_of_functions']
-                    last_index = (i - 1)//f1['number_of_functions']
-                    if i > 0 and index_b != last_index:
-                        index_a = 0
-                    C_a = float(f1['coefficients'][index_a][0])
-                    C_b = float(f2['coefficients'][index_b][0])
-                    e_a = f1['exponents'][index_a]
-                    e_b = f2['exponents'][index_b]
-                    if C_a*C_b != 0:
-                        integral = C_a*C_b*np.sqrt(np.pi/(e_a+e_b))
-                        value += integral
-                    index_a += 1
-        return float(value)
+                value += self._f_j(l, m, Pa, Pb, 0)
 
+        value *= np.sqrt(np.pi/g)
+
+        return value      
+
+    def _f_j(self, l, m, a, b, j):
+        """
+        Calculates the coefficient of x^j in the expansion of (x + a)^l * (x + b)^m
+        """
+        value = 0.0
+
+        for k in range(max(0, j - m), min(j, l) + 1):
+            value += comb(l, k) * comb(m, j - k) * a**(l - k) * b**(m + k - j)
+
+        return value
+    
 class Basis:
     """
     The class Basis calculates Cartesians-Gaussians-Type Orbitals (GTOs).
@@ -251,20 +321,21 @@ class Basis:
         data = self.basis[orbital]
         exp = data['exponents']
         coef = []
-        if 0 <= sel < data['options']:
+
+        if 0 <= sel < data['contracted_functions']:
             # Validates the selection.      
             for c in data['coefficients']:
                 coef.append(c[sel])
         else:
             raise ValueError(
-                f'This selection does not exist, choose from 0 to {data['options'] - 1}')
+                f'This selection does not exist, choose from 0 to {data['contracted_functions'] - 1}')
             # Raises if selected option is out of bounds.
         
         contracted_value = 0.0
         r2 = (self.Ax - x)**2 + (self.Ay - y)**2 + (self.Az - z)**2
         # Calculate the squared distance from the atom's center.
         
-        for i in range(data['number_of_functions']):
+        for i in range(data['number_of_primitives']):
             if coef[i] != 0.0:
                 # Skips calculation if the coefficient is zero.
                 contracted_value += float(coef[i]) * \
