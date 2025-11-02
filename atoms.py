@@ -69,6 +69,7 @@ class Geometry:
                 lines = list(file)
                 self.n_atoms = int(lines[0])
 
+                atomic_dict = {}
                 for i in range(self.n_atoms):
                     l = lines[i+2].strip().split()
                     symbol = l[0]
@@ -77,14 +78,20 @@ class Geometry:
                         'Ay': float(l[2]),
                         'Az': float(l[3])
                     }
+
                     # Stores the data for the current atom in the dictionary.
-                    if symbol not in self.atoms:
-                        self.atoms[symbol] = {
+                    if symbol not in atomic_dict:
+                        atomic_dict[symbol] = {
                             'basis' : {},
                             'instance' : [atom_coord]
                         }
                     else:
-                        self.atoms[symbol]['instance'].append(atom_coord)
+                        atomic_dict[symbol]['instance'].append(atom_coord)
+
+                ordered_atoms = sorted(atomic_dict.keys(), key=lambda item: self.atomic_number.get(item), reverse=True)
+                for element in ordered_atoms:
+                    self.atoms[element] = atomic_dict[element]
+
             return True
             
         except Exception as e:
@@ -177,8 +184,6 @@ class Overlap:
           (1, 1, 1)]  # fxyz
     }
 
-
-
     def __init__(self, geometry):
         self.geometry = geometry
 
@@ -194,13 +199,13 @@ class Overlap:
                 
         
         for atom in molecule:
-
+            
             for orbital, data in atom['basis'].items():
-                components = self.Quantum_numbers.get(orbital, [])
+                quant_numbers = self.Quantum_numbers.get(orbital, [])
                 
                 for k in range(data['contracted_functions']):
                     
-                    for (l, m, n) in components:
+                    for (l, m, n) in quant_numbers:
                         
                         function = {
                             'center': atom['center'],
@@ -225,9 +230,9 @@ class Overlap:
         
         for i in range(dimension):
             for j in range(i, dimension):
-                
+                    
                 value = self._integral(basis_functions[i], basis_functions[j])
-                
+
                 self.matrix[i, j] = value
                 if i != j:
                     self.matrix[j, i] = value 
@@ -238,6 +243,10 @@ class Overlap:
         B = mi2['center']
 
         ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
+
+        print(mi1['primitives'])
+        print('-'*25)
+        print(mi2['primitives'])
 
         for primitive1 in mi1['primitives']:
             C_a = primitive1['coefficient']
@@ -256,10 +265,12 @@ class Overlap:
                 Sy = self._S(mi1['m'], mi2['m'], A['Ay'] - Py, B['Ay'] - Py,gamma)
                 Sz = self._S(mi1['n'], mi2['n'], A['Az'] - Pz, B['Az'] - Pz,gamma)
                 
+
                 
                 integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
                 
                 value += C_a*C_b*integral
+                print(C_a*C_b*integral)
 
         return value
 
