@@ -4,19 +4,7 @@ import pandas as pd
 basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
 molecule_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\mol_ex.txt'
 
-
 mol = Geometry(molecule_file, basis_file)
-
-elements = list(mol.atoms.keys())
-print(elements)
-print('-'*100)
-
-print(mol.atoms['C']['basis'])
-print('-'*100)
-
-lap = Overlap(mol)
-print(lap.matrix)
-print('-'*100)
 
 elements = list(mol.atoms.keys())
 print(elements)
@@ -41,5 +29,8 @@ lap = Overlap(mol)
 df = pd.DataFrame(lap.matrix)
 df.to_excel('overlap_matrix.xlsx', index=False, header=False)
 
+df2 = pd.DataFrame(lap.normalised_matrix)
+df2.to_excel('normalised_overlap_matrix.xlsx', index=False, header=False)
 
 print()
+

@@ -1,6 +1,6 @@
 import numpy as np
 from math import  comb
-from scipy.special import factorial2
+from sympy import factorial2
 
 class Geometry:
     """
@@ -227,26 +227,29 @@ class Overlap:
 
         dimension = len(basis_functions)
         self.matrix = np.zeros((dimension, dimension))
+        self.normalised_matrix = np.zeros((dimension, dimension))
         
         for i in range(dimension):
             for j in range(i, dimension):
-                    
                 value = self._integral(basis_functions[i], basis_functions[j])
 
                 self.matrix[i, j] = value
                 if i != j:
-                    self.matrix[j, i] = value 
+                    self.matrix[j, i] = value
 
-    def _integral(self, mi1, mi2):
+                if i == j:
+                    self.normalised_matrix[i, j] = 1
+                else:
+                    normalised_value = self._integral(basis_functions[i], basis_functions[j], 1)
+                    self.normalised_matrix[i, j] = normalised_value
+                    self.normalised_matrix[j, i] = normalised_value
+
+    def _integral(self, mi1, mi2, normalised=0):
         value = 0.0
         A = mi1['center']
         B = mi2['center']
 
         ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
-
-        print(mi1['primitives'])
-        print('-'*25)
-        print(mi2['primitives'])
 
         for primitive1 in mi1['primitives']:
             C_a = primitive1['coefficient']
@@ -256,7 +259,7 @@ class Overlap:
                 C_b = primitive2['coefficient']
                 beta = primitive2['exponent']
                 gamma = alpha + beta
-
+                
                 Px = (alpha*A['Ax'] + beta*B['Ax'])/gamma
                 Py = (alpha*A['Ay'] + beta*B['Ay'])/gamma
                 Pz = (alpha*A['Az'] + beta*B['Az'])/gamma
@@ -265,23 +268,26 @@ class Overlap:
                 Sy = self._S(mi1['m'], mi2['m'], A['Ay'] - Py, B['Ay'] - Py,gamma)
                 Sz = self._S(mi1['n'], mi2['n'], A['Az'] - Pz, B['Az'] - Pz,gamma)
                 
-
-                
                 integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
                 
-                value += C_a*C_b*integral
-                print(C_a*C_b*integral)
+                if normalised == 1:
+                    value += C_a*C_b*self._N(alpha, mi1['l'], mi1['m'], mi1['n'])*self._N(beta, mi2['l'], mi2['m'], mi2['n'])*integral
+                    
+                else:    
+                    value += C_a*C_b*integral
 
         return value
 
+    def _N(self, alpha, l, m ,n):
+        N = ((4*alpha)**(l + m + n) / factorial2(2*l - 1)*factorial2(2*m - 1)*factorial2(2*n - 1))**(1/2) * (2*alpha/np.pi)**(3/4)
+
+        return N
+    
     def _S(self, l, m, Pa, Pb, g):
         value = 0.0
         
         for j in range((l + m)//2 + 1):
-            if j != 0:
-                value += self._f_j(l, m, Pa, Pb, 2*j) * factorial2(2*j - 1) / (2*g)**j
-            else:
-                value += self._f_j(l, m, Pa, Pb, 0)
+            value += self._f_j(l, m, Pa, Pb, 2*j) * factorial2(2*j - 1) / (2*g)**j
 
         value *= np.sqrt(np.pi/g)
 
