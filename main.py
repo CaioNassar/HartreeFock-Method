@@ -1,8 +1,8 @@
-from atoms import Geometry, Overlap
+from atoms import Geometry, Matrix
 import pandas as pd
 
-basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
-molecule_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\mol_ex.txt'
+basis_file = 'C:\\Users\\Caio\\Documents\\programar\\HartreeFock-Method\\basis_ex.txt'
+molecule_file = 'C:\\Users\\Caio\\Documents\\programar\\HartreeFock-Method\\mol_ex.txt'
 
 mol = Geometry(molecule_file, basis_file)
 
@@ -25,12 +25,15 @@ third_carbon = mol.atoms['C']['instance'][2]['GTO'].p(1, 0, 0.3).z()
 print(third_carbon)
 print('-'*100)
 
-lap = Overlap(mol)
-df = pd.DataFrame(lap.matrix)
-df.to_excel('overlap_matrix.xlsx', index=False, header=False)
+lap = Matrix(mol, 0)
+df1 = pd.DataFrame(lap.matrix)
+df1.to_excel('overlap_matrix.xlsx', index=False, header=False)
 
 df2 = pd.DataFrame(lap.normalised_matrix)
 df2.to_excel('normalised_overlap_matrix.xlsx', index=False, header=False)
 
-print()
+kin = Matrix(mol, 1)
+df3 = pd.DataFrame(kin.matrix)
+df3.to_excel('kinetic_matrix.xlsx', index=False, header=False)
 
+print()

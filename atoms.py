@@ -153,7 +153,7 @@ class Geometry:
             print(f'Something went wrong when trying to read the file: {e}')
         return False
 
-class Overlap:
+class Matrix:
     Quantum_numbers = {
     # l = 0
     's': [(0, 0, 0)],  # s
@@ -184,8 +184,16 @@ class Overlap:
           (1, 1, 1)]  # fxyz
     }
 
-    def __init__(self, geometry):
+    def __init__(self, geometry, type_matrix):
+        """
+        Docstring for __init__
+        
+        :param self: Description
+        :param geometry: Description
+        :param type_matrix: 0: Overlap, 1: Kinetic 
+        """
         self.geometry = geometry
+        self.type_matrix = type_matrix
 
         basis_functions = []
         
@@ -231,52 +239,86 @@ class Overlap:
         
         for i in range(dimension):
             for j in range(i, dimension):
-                value = self._integral(basis_functions[i], basis_functions[j])
+                
+                value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
+
+                if type_matrix == 0:
+                    if i == j:
+                        self.normalised_matrix[i, j] = 1
+                    else:
+                        normalised_value = self._integral(basis_functions[i], basis_functions[j], 1)
+                        self.normalised_matrix[i, j] = normalised_value
+                        self.normalised_matrix[j, i] = normalised_value
 
                 self.matrix[i, j] = value
                 if i != j:
                     self.matrix[j, i] = value
 
-                if i == j:
-                    self.normalised_matrix[i, j] = 1
-                else:
-                    normalised_value = self._integral(basis_functions[i], basis_functions[j], 1)
-                    self.normalised_matrix[i, j] = normalised_value
-                    self.normalised_matrix[j, i] = normalised_value
-
-    def _integral(self, mi1, mi2, normalised=0):
+    def _integral(self, eta1, eta2, type_matrix = 0, normalised = 0):
         value = 0.0
-        A = mi1['center']
-        B = mi2['center']
+
+        for primitive1 in eta1['primitives']:
+            for primitive2 in eta2['primitives']:
+
+                if type_matrix == 0:
+                    value += self._overlap(eta1, eta2, primitive1, primitive2, normalised)
+            
+                if type_matrix == 1:
+                    value += self._kinetic_energy(eta1, eta2, primitive1, primitive2)    
+
+        return value
+    
+    def _overlap(self, eta1, eta2, p1, p2, normalised = 0):
+        value = 0.0
+        A = eta1['center']
+        B = eta2['center']
 
         ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
 
-        for primitive1 in mi1['primitives']:
-            C_a = primitive1['coefficient']
-            alpha = primitive1['exponent']
+        C_a = p1['coefficient']
+        alpha = p1['exponent']
+
+        C_b = p2['coefficient']
+        beta = p2['exponent']
+        gamma = alpha + beta
+
+        Px = (alpha*A['Ax'] + beta*B['Ax'])/gamma
+        Py = (alpha*A['Ay'] + beta*B['Ay'])/gamma
+        Pz = (alpha*A['Az'] + beta*B['Az'])/gamma
+        
+        Sx = self._S(eta1['l'], eta2['l'], A['Ax'] - Px, B['Ax'] - Px,gamma)
+        Sy = self._S(eta1['m'], eta2['m'], A['Ay'] - Py, B['Ay'] - Py,gamma)
+        Sz = self._S(eta1['n'], eta2['n'], A['Az'] - Pz, B['Az'] - Pz,gamma)
+        
+        integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
+
+        if normalised == 1:
+            value += C_a*C_b*self._N(alpha, eta1['l'], eta1['m'], eta1['n'])*self._N(beta, eta2['l'], eta2['m'], eta2['n'])*integral
             
-            for primitive2 in mi2['primitives']:
-                C_b = primitive2['coefficient']
-                beta = primitive2['exponent']
-                gamma = alpha + beta
-                
-                Px = (alpha*A['Ax'] + beta*B['Ax'])/gamma
-                Py = (alpha*A['Ay'] + beta*B['Ay'])/gamma
-                Pz = (alpha*A['Az'] + beta*B['Az'])/gamma
-                
-                Sx = self._S(mi1['l'], mi2['l'], A['Ax'] - Px, B['Ax'] - Px,gamma)
-                Sy = self._S(mi1['m'], mi2['m'], A['Ay'] - Py, B['Ay'] - Py,gamma)
-                Sz = self._S(mi1['n'], mi2['n'], A['Az'] - Pz, B['Az'] - Pz,gamma)
-                
-                integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
-                
-                if normalised == 1:
-                    value += C_a*C_b*self._N(alpha, mi1['l'], mi1['m'], mi1['n'])*self._N(beta, mi2['l'], mi2['m'], mi2['n'])*integral
-                    
-                else:    
-                    value += C_a*C_b*integral
+        else:    
+            value += C_a*C_b*integral
 
         return value
+    
+    def _kinetic_energy(self, eta1, eta2, p1, p2):
+        alpha = p1['exponent']
+        value = alpha*(2*(eta1['l'] + eta1['m'] + eta1['n']) + 3)*self._overlap(eta1, eta2, p1, p2)
+        coord = ['l', 'm', 'n']
+        
+        for c in coord:
+            eta1[c] += 2
+            value += -2*(alpha**2)*self._overlap(eta1, eta2, p1, p2)
+            eta1[c] -= 2
+
+        
+        for c in coord:
+            if eta1[c] >= 2:
+                eta1[c] -= 2
+                value += -0.5*((eta1[c] + 2)*(eta1[c] + 1))*self._overlap(eta1, eta2, p1, p2)
+                eta1[c] += 2
+
+        return value
+        
 
     def _N(self, alpha, l, m ,n):
         N = ((4*alpha)**(l + m + n) / factorial2(2*l - 1)*factorial2(2*m - 1)*factorial2(2*n - 1))**(1/2) * (2*alpha/np.pi)**(3/4)
@@ -303,7 +345,7 @@ class Overlap:
             value += comb(l, k) * comb(m, j - k) * a**(l - k) * b**(m + k - j)
 
         return value
-    
+
 class Basis:
     """
     The class Basis calculates Cartesians-Gaussians-Type Orbitals (GTOs).
