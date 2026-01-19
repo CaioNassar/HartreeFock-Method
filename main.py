@@ -1,8 +1,8 @@
 from atoms import Geometry, Matrix
 import pandas as pd
 
-basis_file = 'C:\\Users\\Caio\\Documents\\programar\\HartreeFock-Method\\basis_ex.txt'
-molecule_file = 'C:\\Users\\Caio\\Documents\\programar\\HartreeFock-Method\\mol_ex.txt'
+basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
+molecule_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\mol_ex.txt'
 
 mol = Geometry(molecule_file, basis_file)
 
@@ -35,5 +35,9 @@ df2.to_excel('normalised_overlap_matrix.xlsx', index=False, header=False)
 kin = Matrix(mol, 1)
 df3 = pd.DataFrame(kin.matrix)
 df3.to_excel('kinetic_matrix.xlsx', index=False, header=False)
+
+nuc = Matrix(mol, 2)
+df4 = pd.DataFrame(nuc.matrix)
+df4.to_excel('nuclear_attraction_matrix.xlsx', index=False, header=False)
 
 print()

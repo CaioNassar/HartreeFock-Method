@@ -1,6 +1,6 @@
 import numpy as np
 from math import  comb
-from sympy import factorial2
+from sympy import factorial, factorial2
 
 class Geometry:
     """
@@ -240,7 +240,8 @@ class Matrix:
         for i in range(dimension):
             for j in range(i, dimension):
                 
-                value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
+                if type_matrix <= 1:
+                    value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
 
                 if type_matrix == 0:
                     if i == j:
@@ -250,13 +251,19 @@ class Matrix:
                         self.normalised_matrix[i, j] = normalised_value
                         self.normalised_matrix[j, i] = normalised_value
 
+                if type_matrix == 2:
+                    value = 0
+                    for atom in molecule:
+                        value += self._integral(basis_functions[i], basis_functions[j], type_matrix, 0, atom)
+
+
                 self.matrix[i, j] = value
                 if i != j:
                     self.matrix[j, i] = value
 
-    def _integral(self, eta1, eta2, type_matrix = 0, normalised = 0):
+    def _integral(self, eta1, eta2, type_matrix = 0, normalised = 0, nucleus = 0):
         value = 0.0
-
+    
         for primitive1 in eta1['primitives']:
             for primitive2 in eta2['primitives']:
 
@@ -265,6 +272,10 @@ class Matrix:
             
                 if type_matrix == 1:
                     value += self._kinetic_energy(eta1, eta2, primitive1, primitive2)    
+
+                if type_matrix == 2:
+                    value += self._nuclear_attraction(eta1, eta2, primitive1, primitive2, nucleus)
+
 
         return value
     
@@ -319,7 +330,135 @@ class Matrix:
 
         return value
         
+    def _nuclear_attraction(self, eta1, eta2, p1, p2, nucleus):
+        A = eta1['center']
+        B = eta2['center']
+        C = nucleus['center']
+        ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2
 
+        alpha = p1['exponent']
+        beta = p2['exponent']
+        gamma = alpha + beta
+        eps = 1/(4*gamma)
+
+        P = {
+            'Px' : (alpha*A['Ax'] + beta*B['Ax'])/gamma,
+            'Py' : (alpha*A['Ay'] + beta*B['Ay'])/gamma,
+            'Pz' : (alpha*A['Az'] + beta*B['Az'])/gamma
+        }
+        
+        pc2 = (P['Px'] - C['Ax'])**2 + (P['Py'] - C['Ay'])**2 + (P['Pz'] - C['Az'])**2
+
+        A_x = self._A('l', eta1, eta2, A['Ax'], B['Ax'], C['Ax'], P['Px'], eps)
+        A_y = self._A('m', eta1, eta2, A['Ay'], B['Ay'], C['Ay'], P['Py'], eps)
+        A_z = self._A('n', eta1, eta2, A['Az'], B['Az'], C['Az'], P['Pz'], eps)
+
+        v_max = eta1['l'] + eta1['m'] + eta1['n'] + eta2['l'] + eta2['m'] + eta2['n']
+
+        boys = self._Boys_recurrence(v_max, gamma*pc2)
+
+        K = 2*np.pi*np.exp(-alpha*beta*ab2/gamma)/gamma
+
+        value = 0
+        for x in range(len(A_x)):
+            for y in range(len(A_y)):
+                for z in range(len(A_z)):
+                    value += A_x[x]*A_y[y]*A_z[z]*boys[x+y+z]
+
+        return K*value
+    
+    def _repulsion(self, eta1, eta2, eta3, eta4, p1, p2, p3, p4):
+        A = eta1['center']
+        B = eta2['center']
+        C = eta3['center']
+        D = eta4['center']
+        ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2
+        cd2 = (C['Ax'] - D['Ax'])**2 + (C['Ay'] - D['Ay'])**2 + (C['Az'] - D['Az'])**2
+
+        alpha1 = p1['exponent']
+        beta1 = p2['exponent']
+        alpha2 = p3['exponent']
+        beta2 = p4['exponent']
+        gamma1 = alpha1 + beta1
+        gamma2 = alpha2 + beta2
+        delta = 1/(4*gamma1) + 1/(4*gamma2)
+
+        P = {
+            'Px' : (alpha1*A['Ax'] + beta1*B['Ax'])/gamma1,
+            'Py' : (alpha1*A['Ay'] + beta1*B['Ay'])/gamma1,
+            'Pz' : (alpha1*A['Az'] + beta1*B['Az'])/gamma1
+        }
+        Q = {
+            'Qx' : (alpha2*A['Ax'] + beta2*B['Ax'])/gamma2,
+            'Qy' : (alpha2*A['Ay'] + beta2*B['Ay'])/gamma2,
+            'Qz' : (alpha2*A['Az'] + beta2*B['Az'])/gamma2
+        }
+        p2 = (P['Px'] - Q['Qx'])**2 + (P['Py'] - Q['Qy'])**2 + (P['Pz'] - Q['Qz'])**2
+
+        B_x = self._B('l', eta1, eta2, eta3, eta4, A['Ax'], B['Ax'], C['Ax'], D['Ax'], P['Px'], Q['Qx'], gamma1, gamma2, delta)
+        B_y = self._B('m', eta1, eta2, eta3, eta4, A['Ay'], B['Ay'], C['Ay'], D['Ax'], P['Py'], Q['Qx'], gamma1, gamma2, delta)
+        B_z = self._B('n', eta1, eta2, eta3, eta4, A['Az'], B['Az'], C['Az'], D['Ax'], P['Pz'], Q['Qx'], gamma1, gamma2, delta)
+
+        v_max = eta1['l'] + eta1['m'] + eta1['n'] + eta2['l'] + eta2['m'] + eta2['n'] + eta3['l'] + eta3['m'] + eta3['n'] + eta4['l'] + eta4['m'] + eta4['n']
+
+        boys = self._Boys_recurrence(v_max, p2/(4*delta))
+
+        omega = 2*np.pi**2*np.sqrt(np.pi/(gamma1 + gamma2))*np.exp(-(alpha1*beta1*ab2/gamma1 + alpha2*beta2*cd2/gamma2))/(gamma1*gamma2)
+
+        value = 0
+        for x in range(len(B_x)):
+            for y in range(len(B_y)):
+                for z in range(len(B_z)):
+                    value += B_x[x]*B_y[y]*B_z[z]*boys[x+y+z]
+
+        return omega*value
+
+    def _B(self, lmn, eta1, eta2, eta3, eta4, A, B, C, D, P, Q, gamma1, gamma2, delta):
+        
+        array = np.zeros(eta1[f'{lmn}'] + eta2[f'{lmn}'] + eta3[f'{lmn}'] + eta4[f'{lmn}'] + 1)
+
+        for index1 in range(0, eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1):
+            for index2 in range(0, index1//2 + 1):
+                for index3 in range(0, (index1 - 2*index2)//2 + 1):
+                    for index4 in range(0, eta3[f'{lmn}'] + eta4[f'{lmn}']):
+                        for index5 in range(0, index1//2 + 1):
+                            array[index1 + index4 - 2*(index2 + index5) - index3] += (-1)**(index4 + index3)*self._theta(index1, eta1[f'{lmn}'], eta2[f'{lmn}'], A - P, B - P, index2, gamma1)*self._theta(index4, eta3[f'{lmn}'], eta4[f'{lmn}'], C - Q, D - Q, index5, gamma2)*(2)**(2*(index2+index5-(index1 + index4)))(delta)**(2*(index2+index5)+index3-(index1+index4))*factorial(index1 + index4 - 2*(index2 + index5))*(P - Q)**(index1 + index4 - 2*(index2 + index5 + index3))/(factorial(index3)*factorial(index1 + index4 - 2*(index3 + index2 + index5)))
+
+        return array
+
+    def _theta(self, j, l, m, a, b, r, gamma):
+        value = self._f_j(l, m, a, b, j)*factorial(j)*gamma**(r-j)/(factorial(r)*factorial(j - 2*r))
+
+        return value
+    
+    def _A(self, lmn, eta1, eta2, A, B, C, P, eps):
+        
+        array = np.zeros(eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1)
+
+        for index1 in range(0, eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1):
+            for index2 in range(0, index1//2 + 1):
+                for index3 in range(0, (index1 - 2*index2)//2 + 1):
+                    array[index1 - 2*index2 - index3] += (-1)**(index1 + index3)*self._f_j(eta1[f'{lmn}'], eta2[f'{lmn}'], A - P, B - P, index1)*factorial(index1)*(C - P)**(index1 - 2*(index2 + index3))*eps**(index2 + index3)/(factorial(index2)*factorial(index3)*factorial(index1 - 2*(index2 + index3)))
+
+        return array
+    
+    
+    def _Boys_recurrence(self, n, x):
+        exp = np.exp(-x)
+
+        if x < n + 1/2:
+            f_max = 1/(2*n+1)
+        else:
+            f_max = factorial2(2*n-1)*(np.sqrt(np.pi/(x**(2*n+1))))/(2**(n+1))
+
+        array = np.zeros(n + 1)
+        array[n] = f_max
+
+        for i in range(n, 0, -1):
+            array[i-1] = (2*x*array[i] + exp)/(2*i + 1)
+
+        return array
+    
     def _N(self, alpha, l, m ,n):
         N = ((4*alpha)**(l + m + n) / factorial2(2*l - 1)*factorial2(2*m - 1)*factorial2(2*n - 1))**(1/2) * (2*alpha/np.pi)**(3/4)
 
