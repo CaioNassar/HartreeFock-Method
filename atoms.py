@@ -234,32 +234,55 @@ class Matrix:
                         basis_functions.append(function)
 
         dimension = len(basis_functions)
-        self.matrix = np.zeros((dimension, dimension))
-        self.normalised_matrix = np.zeros((dimension, dimension))
+        if type_matrix <= 2:
+            self.matrix = np.zeros((dimension, dimension))
+            self.normalised_matrix = np.zeros((dimension, dimension))
+            
+            for i in range(dimension):
+                for j in range(i, dimension):
+                    
+                    if type_matrix <= 1:
+                        value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
+
+                    if type_matrix == 0:
+                        if i == j:
+                            self.normalised_matrix[i, j] = 1
+                        else:
+                            normalised_value = self._integral(basis_functions[i], basis_functions[j], 1)
+                            self.normalised_matrix[i, j] = normalised_value
+                            self.normalised_matrix[j, i] = normalised_value
+
+                    if type_matrix == 2:
+                        value = 0
+                        for atom in molecule:
+                            value += self._integral(basis_functions[i], basis_functions[j], type_matrix, 0, atom)
+
+
+                    self.matrix[i, j] = value
+                    if i != j:
+                        self.matrix[j, i] = value
         
-        for i in range(dimension):
-            for j in range(i, dimension):
-                
-                if type_matrix <= 1:
-                    value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
+        if type_matrix == 3:
+            self.matrix = np.zeros((dimension, dimension, dimension, dimension))
 
-                if type_matrix == 0:
-                    if i == j:
-                        self.normalised_matrix[i, j] = 1
-                    else:
-                        normalised_value = self._integral(basis_functions[i], basis_functions[j], 1)
-                        self.normalised_matrix[i, j] = normalised_value
-                        self.normalised_matrix[j, i] = normalised_value
+            for i in range(dimension):
+                for j in range(i, dimension):
+                    for k in range(j, dimension):
+                        for l in range(k, dimension):
+                            value = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
 
-                if type_matrix == 2:
-                    value = 0
-                    for atom in molecule:
-                        value += self._integral(basis_functions[i], basis_functions[j], type_matrix, 0, atom)
+                            self.matrix[i, j, k, l] = value
 
-
-                self.matrix[i, j] = value
-                if i != j:
-                    self.matrix[j, i] = value
+    def _integral4(self, eta1, eta2, eta3, eta4):
+        value = 0.0
+    
+        for primitive1 in eta1['primitives']:
+            for primitive2 in eta2['primitives']:
+                for primitive3 in eta3['primitives']:
+                    for primitive4 in eta4['primitives']:
+                        value += self._repulsion(eta1, eta2, eta3, eta4, primitive1, primitive2, primitive3, primitive4)
+    
+        return value
 
     def _integral(self, eta1, eta2, type_matrix = 0, normalised = 0, nucleus = 0):
         value = 0.0
@@ -389,15 +412,15 @@ class Matrix:
             'Pz' : (alpha1*A['Az'] + beta1*B['Az'])/gamma1
         }
         Q = {
-            'Qx' : (alpha2*A['Ax'] + beta2*B['Ax'])/gamma2,
-            'Qy' : (alpha2*A['Ay'] + beta2*B['Ay'])/gamma2,
-            'Qz' : (alpha2*A['Az'] + beta2*B['Az'])/gamma2
+            'Qx' : (alpha2*C['Ax'] + beta2*D['Ax'])/gamma2,
+            'Qy' : (alpha2*C['Ay'] + beta2*D['Ay'])/gamma2,
+            'Qz' : (alpha2*C['Az'] + beta2*D['Az'])/gamma2
         }
         p2 = (P['Px'] - Q['Qx'])**2 + (P['Py'] - Q['Qy'])**2 + (P['Pz'] - Q['Qz'])**2
 
         B_x = self._B('l', eta1, eta2, eta3, eta4, A['Ax'], B['Ax'], C['Ax'], D['Ax'], P['Px'], Q['Qx'], gamma1, gamma2, delta)
-        B_y = self._B('m', eta1, eta2, eta3, eta4, A['Ay'], B['Ay'], C['Ay'], D['Ax'], P['Py'], Q['Qx'], gamma1, gamma2, delta)
-        B_z = self._B('n', eta1, eta2, eta3, eta4, A['Az'], B['Az'], C['Az'], D['Ax'], P['Pz'], Q['Qx'], gamma1, gamma2, delta)
+        B_y = self._B('m', eta1, eta2, eta3, eta4, A['Ay'], B['Ay'], C['Ay'], D['Ay'], P['Py'], Q['Qy'], gamma1, gamma2, delta)
+        B_z = self._B('n', eta1, eta2, eta3, eta4, A['Az'], B['Az'], C['Az'], D['Az'], P['Pz'], Q['Qz'], gamma1, gamma2, delta)
 
         v_max = eta1['l'] + eta1['m'] + eta1['n'] + eta2['l'] + eta2['m'] + eta2['n'] + eta3['l'] + eta3['m'] + eta3['n'] + eta4['l'] + eta4['m'] + eta4['n']
 
@@ -420,9 +443,9 @@ class Matrix:
         for index1 in range(0, eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1):
             for index2 in range(0, index1//2 + 1):
                 for index3 in range(0, (index1 - 2*index2)//2 + 1):
-                    for index4 in range(0, eta3[f'{lmn}'] + eta4[f'{lmn}']):
-                        for index5 in range(0, index1//2 + 1):
-                            array[index1 + index4 - 2*(index2 + index5) - index3] += (-1)**(index4 + index3)*self._theta(index1, eta1[f'{lmn}'], eta2[f'{lmn}'], A - P, B - P, index2, gamma1)*self._theta(index4, eta3[f'{lmn}'], eta4[f'{lmn}'], C - Q, D - Q, index5, gamma2)*(2)**(2*(index2+index5-(index1 + index4)))(delta)**(2*(index2+index5)+index3-(index1+index4))*factorial(index1 + index4 - 2*(index2 + index5))*(P - Q)**(index1 + index4 - 2*(index2 + index5 + index3))/(factorial(index3)*factorial(index1 + index4 - 2*(index3 + index2 + index5)))
+                    for index4 in range(0, eta3[f'{lmn}'] + eta4[f'{lmn}'] + 1):
+                        for index5 in range(0, index4//2 + 1):
+                            array[index1 + index4 - 2*(index2 + index5) - index3] += (-1)**(index4 + index3)*self._theta(index1, eta1[f'{lmn}'], eta2[f'{lmn}'], A - P, B - P, index2, gamma1)*self._theta(index4, eta3[f'{lmn}'], eta4[f'{lmn}'], C - Q, D - Q, index5, gamma2)*(2)**(2*(index2+index5-(index1 + index4)))*(delta)**(2*(index2+index5)+index3-(index1+index4))*factorial(index1 + index4 - 2*(index2 + index5))*(P  - Q)**(index1 + index4 - 2*(index3 + index2 + index5))/(factorial(index3)*factorial(index1 + index4 - 2*(index3 + index2 + index5)))
 
         return array
 
