@@ -46,15 +46,17 @@ class Geometry:
         if first_file:    
             second_file = self._read_basis_set()
 
+        n_eletrons = 0
         if first_file and second_file:
             # Loop through each element symbol and its atoms.
             for symbol, element_list in self.atoms.items():
                 # Loop through each atom in the element.
+                n_eletrons += self.atomic_number[symbol]*len(element_list['instance'])
                 for atom_instance in element_list['instance']:
                     # Create a Basis object for this atom and add it to the dictionary.
                     atom_instance['GTO'] = Basis(atom_instance, element_list['basis'])
-        
-        
+
+        print(n_eletrons)
 
     def _read_coordinates(self):
         """
@@ -146,12 +148,19 @@ class Geometry:
                             'exponents': exp,
                             'coefficients': coef,
                         } # Dictionary that stores the parsed data.
+            
+
+            
+            for element in list(self.atoms.keys()):
+                if not self.atoms[element]['basis']:
+                    raise ValueError(f'Configuration ERROR: The element "{element}" does NOT have the basis included in the file.')
+                
             return True
-   
-        except Exception as e:
+    
+        except Exception as e:  
             # Exception if happens some error.
             print(f'Something went wrong when trying to read the file: {e}')
-        return False
+            return False
 
 class Matrix:
     Quantum_numbers = {

@@ -46,4 +46,5 @@ flattened_matrix = rep.matrix.reshape(N*N, N*N)
 df5 = pd.DataFrame(flattened_matrix)
 df5.to_excel('repulsion_matrix_2D.xlsx', index=False, header=False)
 
-print()
+
+print('end')
