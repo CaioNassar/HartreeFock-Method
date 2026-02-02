@@ -38,6 +38,7 @@ class Geometry:
         self.path_basis = path_basis
         self.atoms = {}  # A dictionary to cache the data read from the files.
         self.n_atoms = 0 # Number of atoms in the element
+        self.n_eletrons = 0
 
         # Reads the file of the atomic coordinates, sets self.atoms.
         first_file = self._read_coordinates()
@@ -56,7 +57,7 @@ class Geometry:
                     # Create a Basis object for this atom and add it to the dictionary.
                     atom_instance['GTO'] = Basis(atom_instance, element_list['basis'])
 
-        print(n_eletrons)
+            self.n_eletrons = n_eletrons
 
     def _read_coordinates(self):
         """
@@ -598,7 +599,41 @@ class Basis:
         radial = self._calculate(x, y, z, sel, 'p')
         return ResultP(radial, x, y, z)
 
+class SCF:
+    def __init__(self, path_coord, path_basis, initial_guess=0):
+        # initial_guess = 0: Core Hamiltonian
+        self.geometry = Geometry(path_coord, path_basis)
+        if not self.geometry.n_eletrons % 2:
+            raise ValueError("An even number of electrons is necessary for the closed-shell calculation.")
+        
+        self.S = Matrix(self.geometry, 0)
+        self.T = Matrix(self.geometry, 1)
+        self.V = Matrix(self.geometry, 2)
 
+        H_core = self.T + self.V
+
+        closed_shell = self.geometry.n_eletrons / 2
+
+        X = self._transform_matrix(self.S)
+        H = X.T @ H_core @ X
+
+        eig_val, C0 = np.linalg.eigh(H)
+        C = X @ C0
+
+
+    def _transform_matrix(self, S, s_crit=10**-5):
+        s, U = np.linalg.eigh(S)
+
+        tolerance = s > s_crit
+        s_new = s[tolerance]
+        U_new = U[:, tolerance]
+
+        X = U_new @ np.diag(s_new**-0.5)
+
+        return X
+
+
+    
 class ResultP:
     """
     As p-orbital's value is the product of its radial part and the coordinate
