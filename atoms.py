@@ -1,6 +1,5 @@
 import numpy as np
-from math import  comb
-from sympy import factorial, factorial2
+from math import comb, factorial
 
 class Geometry:
     """
@@ -196,43 +195,36 @@ class Matrix:
 
     def __init__(self, geometry, type_matrix):
         """
-        Docstring for __init__
-        
-        :param self: Description
-        :param geometry: Description
-        :param type_matrix: 0: Overlap, 1: Kinetic 
+        Args:
+        type_matrix: 0: Overlap, 1: Kinetic, 2:  Nuclear_Attraction, 3: Repulsion
         """
         self.geometry = geometry
         self.type_matrix = type_matrix
 
         basis_functions = []
-        
         molecule = []
+
         for symbol, data in self.geometry.atoms.items():
             for center in data['instance']:
                 molecule.append({
+                    'symbol': symbol,
                     'center': center,
                     'basis': data['basis']
                 })
                 
-        
         for atom in molecule:
-            
             for orbital, data in atom['basis'].items():
                 quant_numbers = self.Quantum_numbers.get(orbital, [])
-                
                 for k in range(data['contracted_functions']):
-                    
                     for (l, m, n) in quant_numbers:
-                        
                         function = {
+                            'symbol': atom['symbol'],
                             'center': atom['center'],
                             'l': l,
                             'm': m,
                             'n': n,
                             'primitives': [],
                         }
-                        
                         for i in range(data['number_of_primitives']):
                             coef = float(data['coefficients'][i][k])
                             if coef != 0.0: 
@@ -242,16 +234,26 @@ class Matrix:
                                 })
                         
                         basis_functions.append(function)
-
+        self.basis_functions = basis_functions
         dimension = len(basis_functions)
-        if type_matrix <= 2:
+        if type_matrix == 3:
+            self.matrix = np.zeros((dimension, dimension, dimension, dimension))
+
+            for i in range(dimension):
+                for j in range(i, dimension):
+                    for k in range(j, dimension):
+                        for l in range(k, dimension):
+                            value = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
+
+                            self.matrix[i, j, k, l] = value
+        else:
             self.matrix = np.zeros((dimension, dimension))
             self.normalised_matrix = np.zeros((dimension, dimension))
             
             for i in range(dimension):
                 for j in range(i, dimension):
                     
-                    if type_matrix <= 1:
+                    if type_matrix == 0 or type_matrix == 1:
                         value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
 
                     if type_matrix == 0:
@@ -272,16 +274,6 @@ class Matrix:
                     if i != j:
                         self.matrix[j, i] = value
         
-        if type_matrix == 3:
-            self.matrix = np.zeros((dimension, dimension, dimension, dimension))
-
-            for i in range(dimension):
-                for j in range(i, dimension):
-                    for k in range(j, dimension):
-                        for l in range(k, dimension):
-                            value = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
-
-                            self.matrix[i, j, k, l] = value
 
     def _integral4(self, eta1, eta2, eta3, eta4):
         value = 0.0
@@ -599,39 +591,50 @@ class Basis:
         radial = self._calculate(x, y, z, sel, 'p')
         return ResultP(radial, x, y, z)
 
-class SCF:
-    def __init__(self, path_coord, path_basis, initial_guess=0):
-        # initial_guess = 0: Core Hamiltonian
-        self.geometry = Geometry(path_coord, path_basis)
-        if not self.geometry.n_eletrons % 2:
+class Scf:
+    Vsip = {
+        # From Yaehmop
+        'H': {'s': -13.6},
+        'C': {'s': -21.4, 'p': -11.4},
+        'O': {'s': -32.3, 'p': -14.8},
+        'N': {'s': -26.0, 'p': -13.4}
+    }
+    def __init__(self, geometry):
+        self.geometry = geometry
+        if self.geometry.n_eletrons % 2:
             raise ValueError("An even number of electrons is necessary for the closed-shell calculation.")
         
         self.S = Matrix(self.geometry, 0)
-        self.T = Matrix(self.geometry, 1)
-        self.V = Matrix(self.geometry, 2)
+        self.H_core = self._extended_huckel()
 
-        H_core = self.T + self.V
+    def _extended_huckel(self):
+        basis = self.S.basis_functions
+        dimension = len(basis)
+        K = 1.75
+        H_eht = np.zeros((dimension, dimension))
 
-        closed_shell = self.geometry.n_eletrons / 2
+        for i in range(dimension):
+            symbol = basis[i]['symbol']
+            l, m, n = basis[i]['l'], basis[i]['m'], basis[i]['n']
+            H_eht[i,i] = self.Vsip[symbol][self._orbital_type(l,m,n)]
 
-        X = self._transform_matrix(self.S)
-        H = X.T @ H_core @ X
+        for i in range(dimension):
+            for j in range(i, dimension):
+                H_eht[i,j] = K*self.S.matrix[i,j]*(H_eht[i,i] + H_eht[j,j])/2
+                H_eht[j,i] = H_eht[i,j]
 
-        eig_val, C0 = np.linalg.eigh(H)
-        C = X @ C0
+        return H_eht
 
-
-    def _transform_matrix(self, S, s_crit=10**-5):
-        s, U = np.linalg.eigh(S)
-
-        tolerance = s > s_crit
-        s_new = s[tolerance]
-        U_new = U[:, tolerance]
-
-        X = U_new @ np.diag(s_new**-0.5)
-
-        return X
-
+    def _orbital_type(self, l, m, n):
+        numbers = l + m + n
+        if numbers == 0:
+            return 's'
+        if numbers == 1:
+            return 'p'
+        if numbers == 2:
+            return 'd'
+        if numbers == 3:
+            return 'f'
 
     
 class ResultP:
@@ -670,3 +673,9 @@ class ResultP:
         Returns the value for pz orbital
         """
         return self.value * self._z
+
+def factorial2(n):
+    value = 1
+    for i in range (n, 0, -2):
+        value *= i
+    return value

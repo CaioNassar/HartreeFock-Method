@@ -1,4 +1,4 @@
-from atoms import Geometry, Matrix
+from atoms import Geometry, Matrix, Scf
 import pandas as pd
 
 basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
@@ -46,5 +46,8 @@ flattened_matrix = rep.matrix.reshape(N*N, N*N)
 df5 = pd.DataFrame(flattened_matrix)
 df5.to_excel('repulsion_matrix_2D.xlsx', index=False, header=False)
 
+h_core = Scf(mol)
+df6 = pd.DataFrame(h_core.H_core)
+df6.to_excel('hamiltonian_core_matrix.xlsx', index=False, header=False)
 
 print('end')
