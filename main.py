@@ -50,4 +50,8 @@ h_core = Scf(mol)
 df6 = pd.DataFrame(h_core.H_core)
 df6.to_excel('hamiltonian_core_matrix.xlsx', index=False, header=False)
 
+h_core = Scf(mol)
+df6 = pd.DataFrame(h_core.H_huckel)
+df6.to_excel('hamiltonian_huckel_matrix.xlsx', index=False, header=False)
+
 print('end')

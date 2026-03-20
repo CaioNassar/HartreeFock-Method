@@ -240,12 +240,13 @@ class Matrix:
             self.matrix = np.zeros((dimension, dimension, dimension, dimension))
 
             for i in range(dimension):
-                for j in range(i, dimension):
-                    for k in range(j, dimension):
-                        for l in range(k, dimension):
+                for j in range(dimension):
+                    for k in range(i, dimension):
+                        for l in range(j, dimension):
                             value = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
 
                             self.matrix[i, j, k, l] = value
+
         else:
             self.matrix = np.zeros((dimension, dimension))
             self.normalised_matrix = np.zeros((dimension, dimension))
@@ -593,19 +594,30 @@ class Basis:
 
 class Scf:
     Vsip = {
-        # From Yaehmop
+        # Valence state ionization potential, from YAeHMOP
         'H': {'s': -13.6},
         'C': {'s': -21.4, 'p': -11.4},
         'O': {'s': -32.3, 'p': -14.8},
         'N': {'s': -26.0, 'p': -13.4}
     }
+
     def __init__(self, geometry):
         self.geometry = geometry
         if self.geometry.n_eletrons % 2:
             raise ValueError("An even number of electrons is necessary for the closed-shell calculation.")
         
         self.S = Matrix(self.geometry, 0)
-        self.H_core = self._extended_huckel()
+        self.T = Matrix(self.geometry, 1)
+        self.V = Matrix(self.geometry, 2)
+        self.H_huckel = self._extended_huckel()
+        self.H_core = self._core_hamiltonian()
+
+    def _core_hamiltonian(self):
+        H = self.T.matrix + self.V.matrix
+        eigenvalues = np.linalg.eigvalsh(H)
+        diag = np.diagonal(eigenvalues)
+
+        return diag
 
     def _extended_huckel(self):
         basis = self.S.basis_functions
