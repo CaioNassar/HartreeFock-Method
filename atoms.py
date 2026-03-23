@@ -633,7 +633,7 @@ class Scf:
     
     def _density(self, H):
         s, U = np.linalg.eigh(self.S.matrix)
-        X = U @ np.diag(1 / np.sqrt(s))
+        X = U*(1/np.sqrt(s))
         H_ortho = X @ H @ X.T
         eigenvalues, C = np.linalg.eigh(H_ortho)
         Coeff = X @ C
