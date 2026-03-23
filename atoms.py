@@ -37,7 +37,7 @@ class Geometry:
         self.path_basis = path_basis
         self.atoms = {}  # A dictionary to cache the data read from the files.
         self.n_atoms = 0 # Number of atoms in the element
-        self.n_eletrons = 0
+        self.n_electrons = 0
 
         # Reads the file of the atomic coordinates, sets self.atoms.
         first_file = self._read_coordinates()
@@ -46,17 +46,17 @@ class Geometry:
         if first_file:    
             second_file = self._read_basis_set()
 
-        n_eletrons = 0
+        n_electrons = 0
         if first_file and second_file:
             # Loop through each element symbol and its atoms.
             for symbol, element_list in self.atoms.items():
                 # Loop through each atom in the element.
-                n_eletrons += self.atomic_number[symbol]*len(element_list['instance'])
+                n_electrons += self.atomic_number[symbol]*len(element_list['instance'])
                 for atom_instance in element_list['instance']:
                     # Create a Basis object for this atom and add it to the dictionary.
                     atom_instance['GTO'] = Basis(atom_instance, element_list['basis'])
 
-            self.n_eletrons = n_eletrons
+            self.n_electrons = n_electrons
 
     def _read_coordinates(self):
         """
@@ -603,21 +603,15 @@ class Scf:
 
     def __init__(self, geometry):
         self.geometry = geometry
-        if self.geometry.n_eletrons % 2:
+        if self.geometry.n_electrons % 2:
             raise ValueError("An even number of electrons is necessary for the closed-shell calculation.")
         
         self.S = Matrix(self.geometry, 0)
         self.T = Matrix(self.geometry, 1)
         self.V = Matrix(self.geometry, 2)
         self.H_huckel = self._extended_huckel()
-        self.H_core = self._core_hamiltonian()
-
-    def _core_hamiltonian(self):
-        H = self.T.matrix + self.V.matrix
-        eigenvalues = np.linalg.eigvalsh(H)
-        diag = np.diagonal(eigenvalues)
-
-        return diag
+        self.H_core = self.T.matrix + self.V.matrix
+        self.D = self._density(self.H_core)
 
     def _extended_huckel(self):
         basis = self.S.basis_functions
@@ -636,7 +630,20 @@ class Scf:
                 H_eht[j,i] = H_eht[i,j]
 
         return H_eht
+    
+    def _density(self, H):
+        s, U = np.linalg.eigh(self.S.matrix)
+        X = U @ np.diag(1 / np.sqrt(s))
+        H_ortho = X @ H @ X.T
+        eigenvalues, C = np.linalg.eigh(H_ortho)
+        Coeff = X @ C
 
+        N_i = self.geometry.n_electrons // 2
+        C_occupied = Coeff[:, :N_i]
+        D = C_occupied @ C_occupied.conj().T
+
+        return D
+        
     def _orbital_type(self, l, m, n):
         numbers = l + m + n
         if numbers == 0:
@@ -648,7 +655,6 @@ class Scf:
         if numbers == 3:
             return 'f'
 
-    
 class ResultP:
     """
     As p-orbital's value is the product of its radial part and the coordinate

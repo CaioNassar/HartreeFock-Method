@@ -5,7 +5,7 @@ basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method
 molecule_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\mol_ex.txt'
 
 mol = Geometry(molecule_file, basis_file)
-
+"""
 elements = list(mol.atoms.keys())
 print(elements)
 print('-'*100)
@@ -45,13 +45,18 @@ N = rep.matrix.shape[0]
 flattened_matrix = rep.matrix.reshape(N*N, N*N)
 df5 = pd.DataFrame(flattened_matrix)
 df5.to_excel('repulsion_matrix_2D.xlsx', index=False, header=False)
-
-h_core = Scf(mol)
-df6 = pd.DataFrame(h_core.H_core)
+"""
+h_core = Scf(mol).H_core
+df6 = pd.DataFrame(h_core)
 df6.to_excel('hamiltonian_core_matrix.xlsx', index=False, header=False)
 
-h_core = Scf(mol)
-df6 = pd.DataFrame(h_core.H_huckel)
-df6.to_excel('hamiltonian_huckel_matrix.xlsx', index=False, header=False)
+h_huckel = Scf(mol).H_huckel
+df7 = pd.DataFrame(h_huckel)
+df7.to_excel('hamiltonian_huckel_matrix.xlsx', index=False, header=False)
+
+D = Scf(mol).D
+df8 = pd.DataFrame(D)
+df8.to_excel('density_guess.xlsx', index=False, header=False)
+
 
 print('end')
