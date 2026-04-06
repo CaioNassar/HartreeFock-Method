@@ -240,12 +240,14 @@ class Matrix:
             self.matrix = np.zeros((dimension, dimension, dimension, dimension))
 
             for i in range(dimension):
-                for j in range(dimension):
-                    for k in range(i, dimension):
-                        for l in range(j, dimension):
-                            value = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
+                for j in range(i, dimension):
+                    for k in range(dimension):
+                        for l in range(k, dimension):
+                            if (k, l) >= (i, j):
+                                value = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
 
-                            self.matrix[i, j, k, l] = value
+                                self.matrix[i, j, k, l] = value
+                                self.matrix[k, l, i, j] = value
 
         else:
             self.matrix = np.zeros((dimension, dimension))
@@ -607,21 +609,23 @@ class Scf:
             raise ValueError("An even number of electrons is necessary for the closed-shell calculation.")
         
         self.S = Matrix(self.geometry, 0)
+        self.basis = self.S.basis_functions
         self.T = Matrix(self.geometry, 1)
         self.V = Matrix(self.geometry, 2)
+        self.Rep = Matrix(self.geometry, 3)
         self.H_huckel = self._extended_huckel()
         self.H_core = self.T.matrix + self.V.matrix
         self.D = self._density(self.H_core)
+        self.J, self.K = self._coulomb_and_exchange(self.D)
 
     def _extended_huckel(self):
-        basis = self.S.basis_functions
-        dimension = len(basis)
+        dimension = len(self.basis)
         K = 1.75
         H_eht = np.zeros((dimension, dimension))
 
         for i in range(dimension):
-            symbol = basis[i]['symbol']
-            l, m, n = basis[i]['l'], basis[i]['m'], basis[i]['n']
+            symbol = self.basis[i]['symbol']
+            l, m, n = self.basis[i]['l'], self.basis[i]['m'], self.basis[i]['n']
             H_eht[i,i] = self.Vsip[symbol][self._orbital_type(l,m,n)]
 
         for i in range(dimension):
@@ -643,6 +647,41 @@ class Scf:
         D = C_occupied @ C_occupied.conj().T
 
         return D
+    
+    def _coulomb_and_exchange(self, D):
+        dimension = len(self.basis)
+        Rep = self.Rep.matrix
+        J = np.zeros((dimension, dimension))
+        K = np.zeros((dimension, dimension))
+
+        for p in range(dimension):
+            for q in range(dimension):
+                p_j = min(p,q)
+                q_j = max(p,q)
+                for r in range(dimension):
+                    for s in range(dimension):
+                        r_j = min(r,s)
+                        s_j = max(r,s)
+
+                        p_k = min(p,s)
+                        s_k = max(p,s)
+                        r_k = min(r,q)
+                        q_k = max(r,q)
+
+                        if (r_j, s_j) >= (p_j, q_j):
+                            val_J = Rep[p_j, q_j, r_j, s_j]
+                        else:
+                            val_J = Rep[r_j, s_j, p_j, q_j]
+
+                        if (r_k, q_k) >= (p_k, s_k):
+                            val_K = Rep[p_k, s_k, r_k, q_k]
+                        else:
+                            val_K = Rep[r_k, q_k, p_k, s_k]
+
+                        J[p, q] += val_J * D[r, s]
+                        K[p, q] += val_K * D[r, s]
+                        
+        return J, K
         
     def _orbital_type(self, l, m, n):
         numbers = l + m + n
