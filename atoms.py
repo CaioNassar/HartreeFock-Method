@@ -36,7 +36,8 @@ class Geometry:
         self.path_coord = path_coord
         self.path_basis = path_basis
         self.atoms = {}  # A dictionary to cache the data read from the files.
-        self.n_atoms = 0 # Number of atoms in the element
+        self.atom_list = []
+        self.n_atoms = 0 # Number of atoms in the element.
         self.n_electrons = 0
 
         # Reads the file of the atomic coordinates, sets self.atoms.
@@ -76,11 +77,13 @@ class Geometry:
                     l = lines[i+2].strip().split()
                     symbol = l[0]
                     atom_coord = {
+                        'symbol': symbol,
                         'Ax': float(l[1]),
                         'Ay': float(l[2]),
                         'Az': float(l[3])
                     }
 
+                    self.atom_list.append(atom_coord)
                     # Stores the data for the current atom in the dictionary.
                     if symbol not in atomic_dict:
                         atomic_dict[symbol] = {
@@ -263,14 +266,14 @@ class Matrix:
                         if i == j:
                             self.normalised_matrix[i, j] = 1
                         else:
-                            normalised_value = self._integral(basis_functions[i], basis_functions[j], 1)
+                            normalised_value = self._integral(basis_functions[i], basis_functions[j], 0)
                             self.normalised_matrix[i, j] = normalised_value
                             self.normalised_matrix[j, i] = normalised_value
 
                     if type_matrix == 2:
                         value = 0
                         for atom in molecule:
-                            value += self._integral(basis_functions[i], basis_functions[j], type_matrix, 0, atom)
+                            value += self._integral(basis_functions[i], basis_functions[j], type_matrix, atom)
 
 
                     self.matrix[i, j] = value
@@ -285,29 +288,49 @@ class Matrix:
             for primitive2 in eta2['primitives']:
                 for primitive3 in eta3['primitives']:
                     for primitive4 in eta4['primitives']:
-                        value += self._repulsion(eta1, eta2, eta3, eta4, primitive1, primitive2, primitive3, primitive4)
+                        C_a = primitive1['coefficient']
+                        C_b = primitive2['coefficient']
+                        C_c = primitive3['coefficient']
+                        C_d = primitive4['coefficient']
+
+                        alpha1 = primitive1['exponent']
+                        beta1 = primitive2['exponent']
+                        alpha2 = primitive3['exponent']
+                        beta2 = primitive4['exponent']
+
+                        value += (self._repulsion(eta1, eta2, eta3, eta4, primitive1, primitive2, primitive3, primitive4) *
+                                  C_a * C_b * self._N(alpha1, eta1['l'], eta1['m'], eta1['n']) * self._N(beta1, eta2['l'], eta2['m'], eta2['n']) *
+                                  C_c * C_d * self._N(alpha2, eta3['l'], eta3['m'], eta3['n']) * self._N(beta2, eta4['l'], eta4['m'], eta4['n']))
     
         return value
 
-    def _integral(self, eta1, eta2, type_matrix = 0, normalised = 0, nucleus = 0):
+    def _integral(self, eta1, eta2, type_matrix = 0, nucleus = 0):
         value = 0.0
     
         for primitive1 in eta1['primitives']:
             for primitive2 in eta2['primitives']:
+                C_a = primitive1['coefficient']
+                C_b = primitive2['coefficient']
+
+                alpha = primitive1['exponent']
+                beta = primitive2['exponent']
+
+                integral = 0.0
 
                 if type_matrix == 0:
-                    value += self._overlap(eta1, eta2, primitive1, primitive2, normalised)
+                    integral += self._overlap(eta1, eta2, primitive1, primitive2)
             
                 if type_matrix == 1:
-                    value += self._kinetic_energy(eta1, eta2, primitive1, primitive2)    
+                    integral += self._kinetic_energy(eta1, eta2, primitive1, primitive2)    
 
                 if type_matrix == 2:
-                    value += self._nuclear_attraction(eta1, eta2, primitive1, primitive2, nucleus)
+                    integral += self._nuclear_attraction(eta1, eta2, primitive1, primitive2, nucleus)
 
+                value += C_a*C_b*integral*self._N(alpha, eta1['l'], eta1['m'], eta1['n'])*self._N(beta, eta2['l'], eta2['m'], eta2['n'])
 
         return value
     
-    def _overlap(self, eta1, eta2, p1, p2, normalised = 0):
+    def _overlap(self, eta1, eta2, p1, p2):
         value = 0.0
         A = eta1['center']
         B = eta2['center']
@@ -331,13 +354,7 @@ class Matrix:
         
         integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
 
-        if normalised == 1:
-            value += C_a*C_b*self._N(alpha, eta1['l'], eta1['m'], eta1['n'])*self._N(beta, eta2['l'], eta2['m'], eta2['n'])*integral
-            
-        else:    
-            value += C_a*C_b*integral
-
-        return value
+        return integral
     
     def _kinetic_energy(self, eta1, eta2, p1, p2):
         alpha = p1['exponent']
@@ -488,7 +505,7 @@ class Matrix:
         return array
     
     def _N(self, alpha, l, m ,n):
-        N = ((4*alpha)**(l + m + n) / factorial2(2*l - 1)*factorial2(2*m - 1)*factorial2(2*n - 1))**(1/2) * (2*alpha/np.pi)**(3/4)
+        N = ((4*alpha)**(l + m + n) / ((factorial2(2*l - 1)*factorial2(2*m - 1)*factorial2(2*n - 1))**(1/2) * (2*alpha/np.pi)**(3/4)))
 
         return N
     
@@ -617,7 +634,45 @@ class Scf:
         self.H_core = self.T.matrix + self.V.matrix
         self.D = self._density(self.H_core)
         self.J, self.K = self._coulomb_and_exchange(self.D)
+        self.F = self.H_core + 2*self.J - self.K 
 
+    def scf(self, max_cond_number = 1e-5, max_iter = 100):
+        E_elec = np.sum(self.D*(self.H_core + self.F))
+        E_nuc = self._nuclear_energy()
+        E = [0.0, E_elec]
+        D = self._density(self.F)
+
+        for i in range(max_iter):
+            J, K = self._coulomb_and_exchange(D)
+            F = self.H_core + 2*J - K
+            D = self._density(F)
+            E_elec = np.sum(D*(self.H_core + F))
+            E[i%2] = E_elec
+
+            if abs(E[0] - E[1]) < max_cond_number:
+                self.J, self.K, self.D, self.F = J, K, D, F
+                return [E_elec.item(), E_nuc.item(), i]
+        
+        return 404
+
+    def _nuclear_energy(self):
+        atoms = self.geometry.atom_list
+        E_nuc = 0.0
+
+        for i in range(self.geometry.n_atoms):
+            for j in range(i + 1, self.geometry.n_atoms):
+                Z_a = self.geometry.atomic_number[atoms[i]['symbol']]
+                Z_b = self.geometry.atomic_number[atoms[j]['symbol']]
+
+                dx = atoms[i]['Ax'] - atoms[j]['Ax']
+                dy = atoms[i]['Ay'] - atoms[j]['Ay']
+                dz = atoms[i]['Az'] - atoms[j]['Az']
+                d = np.sqrt(dx**2 + dy**2 + dz**2)
+                
+                E_nuc += (Z_a * Z_b)/d
+
+        return E_nuc
+    
     def _extended_huckel(self):
         dimension = len(self.basis)
         K = 1.75

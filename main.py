@@ -48,14 +48,11 @@ flattened_matrix = rep.matrix.reshape(N*N, N*N)
 df5 = pd.DataFrame(flattened_matrix)
 df5.to_excel('repulsion_matrix_2D.xlsx', index=False, header=False)
 
-h_core = Scf(mol).H_core
-df6 = pd.DataFrame(h_core)
+df6 = pd.DataFrame(mol_scf.H_core)
 df6.to_excel('hamiltonian_core_matrix.xlsx', index=False, header=False)
 
-h_huckel = Scf(mol).H_huckel
-df7 = pd.DataFrame(h_huckel)
+df7 = pd.DataFrame(mol_scf.H_huckel)
 df7.to_excel('hamiltonian_huckel_matrix.xlsx', index=False, header=False)
-"""
 
 df8 = pd.DataFrame(mol_scf.D)
 df8.to_excel('density_guess.xlsx', index=False, header=False)
@@ -63,9 +60,10 @@ df8.to_excel('density_guess.xlsx', index=False, header=False)
 df9 = pd.DataFrame(mol_scf.J)
 df9.to_excel('Coulomb_matrix.xlsx', index=False, header=False)
 
-
 dfA = pd.DataFrame(mol_scf.K)
 dfA.to_excel('Exchange_matrix.xlsx', index=False, header=False)
+"""
 
-
+energy = mol_scf.scf()
+print("Repulsion energy:", energy[0], "\nNuclear energy:", energy[1], "\nConvergence after", energy[2], "iterations")
 print('end')
