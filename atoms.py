@@ -73,14 +73,15 @@ class Geometry:
                 self.n_atoms = int(lines[0])
 
                 atomic_dict = {}
+                ang2bohr = 1.8897259886
                 for i in range(self.n_atoms):
                     l = lines[i+2].strip().split()
                     symbol = l[0]
                     atom_coord = {
                         'symbol': symbol,
-                        'Ax': float(l[1]),
-                        'Ay': float(l[2]),
-                        'Az': float(l[3])
+                        'Ax': float(l[1]) * ang2bohr,
+                        'Ay': float(l[2]) * ang2bohr,
+                        'Az': float(l[3]) * ang2bohr
                     }
 
                     self.atom_list.append(atom_coord)
@@ -254,32 +255,41 @@ class Matrix:
 
         else:
             self.matrix = np.zeros((dimension, dimension))
-            self.normalised_matrix = np.zeros((dimension, dimension))
             
             for i in range(dimension):
                 for j in range(i, dimension):
-                    
-                    if type_matrix == 0 or type_matrix == 1:
-                        value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
+                    # First calculates the diagonal
+                    if i == 0:
+                        if type_matrix == 0 or type_matrix == 1:
+                            self.matrix[j, j] = self._integral(basis_functions[j], basis_functions[j], type_matrix)
+                        if type_matrix == 2:
+                            value = 0
+                            for atom in molecule:
+                                value += self._integral(basis_functions[j], basis_functions[j], type_matrix, atom)
+                            self.matrix[j, j] = value
 
-                    if type_matrix == 0:
-                        if i == j:
-                            self.normalised_matrix[i, j] = 1
-                        else:
-                            normalised_value = self._integral(basis_functions[i], basis_functions[j], 0)
-                            self.normalised_matrix[i, j] = normalised_value
-                            self.normalised_matrix[j, i] = normalised_value
-
-                    if type_matrix == 2:
-                        value = 0
-                        for atom in molecule:
-                            value += self._integral(basis_functions[i], basis_functions[j], type_matrix, atom)
-
-
-                    self.matrix[i, j] = value
                     if i != j:
+                        if type_matrix == 0:
+                            # With normalization
+                            integral = self._integral(basis_functions[i], basis_functions[j], type_matrix)
+                            value = integral / (np.sqrt(self.matrix[i, i] * self.matrix[j, j]))
+                            
+
+                        if type_matrix == 1:
+                            value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
+
+                        if type_matrix == 2:
+                            value = 0
+                            for atom in molecule:
+                                value += self._integral(basis_functions[i], basis_functions[j], type_matrix, atom)
+
+                        self.matrix[i, j] = value
                         self.matrix[j, i] = value
-        
+                
+                # Correction
+                if type_matrix == 0:
+                    self.matrix[i, i] = 1.0
+            
 
     def _integral4(self, eta1, eta2, eta3, eta4):
         value = 0.0
@@ -331,16 +341,13 @@ class Matrix:
         return value
     
     def _overlap(self, eta1, eta2, p1, p2):
-        value = 0.0
         A = eta1['center']
         B = eta2['center']
 
         ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
 
-        C_a = p1['coefficient']
         alpha = p1['exponent']
 
-        C_b = p2['coefficient']
         beta = p2['exponent']
         gamma = alpha + beta
 
@@ -410,7 +417,7 @@ class Matrix:
                 for z in range(len(A_z)):
                     value += A_x[x]*A_y[y]*A_z[z]*boys[x+y+z]
 
-        return K*value
+        return -self.geometry.atomic_number[nucleus['symbol']]*K*value
     
     def _repulsion(self, eta1, eta2, eta3, eta4, p1, p2, p3, p4):
         A = eta1['center']
@@ -500,12 +507,12 @@ class Matrix:
         array[n] = f_max
 
         for i in range(n, 0, -1):
-            array[i-1] = (2*x*array[i] + exp)/(2*i + 1)
+            array[i-1] = (2*x*array[i] + exp)/(2*i - 1)
 
         return array
     
     def _N(self, alpha, l, m ,n):
-        N = ((4*alpha)**(l + m + n) / ((factorial2(2*l - 1)*factorial2(2*m - 1)*factorial2(2*n - 1))**(1/2) * (2*alpha/np.pi)**(3/4)))
+        N = ((((4*alpha)**(l + m + n) / (factorial2(2*l - 1)*factorial2(2*m - 1)*factorial2(2*n - 1)))**(1/2)) * (2*alpha/np.pi)**(3/4))
 
         return N
     
@@ -637,10 +644,9 @@ class Scf:
         self.F = self.H_core + 2*self.J - self.K 
 
     def scf(self, max_cond_number = 1e-5, max_iter = 100):
-        E_elec = np.sum(self.D*(self.H_core + self.F))
         E_nuc = self._nuclear_energy()
-        E = [0.0, E_elec]
-        D = self._density(self.F)
+        E = [0.0, 0.0]
+        D = self.D
 
         for i in range(max_iter):
             J, K = self._coulomb_and_exchange(D)
@@ -648,7 +654,7 @@ class Scf:
             D = self._density(F)
             E_elec = np.sum(D*(self.H_core + F))
             E[i%2] = E_elec
-
+            print(E[0] - E[1], E_nuc.item(), i)
             if abs(E[0] - E[1]) < max_cond_number:
                 self.J, self.K, self.D, self.F = J, K, D, F
                 return [E_elec.item(), E_nuc.item(), i]
@@ -692,6 +698,9 @@ class Scf:
     
     def _density(self, H):
         s, U = np.linalg.eigh(self.S.matrix)
+        s_crit = 1e-5
+        s = s[s > s_crit]
+        U = U[:, s > s_crit]
         X = U*(1/np.sqrt(s))
         H_ortho = X @ H @ X.T
         eigenvalues, C = np.linalg.eigh(H_ortho)
