@@ -1,8 +1,8 @@
 from atoms import Geometry, Matrix, Scf
 import pandas as pd
 
-basis_file = 'C:\\Users\\caio\\Documents\\IC\\HartreeFock-Method\\basis_ex.txt'
-molecule_file = 'C:\\Users\\caio\\Documents\\IC\\HartreeFock-Method\\mol_ex.txt'
+basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
+molecule_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\mol_ex.txt'
 
 mol = Geometry(molecule_file, basis_file)
 mol_scf = Scf(mol)
@@ -62,5 +62,6 @@ dfA.to_excel('Exchange_matrix.xlsx', index=False, header=False)
 
 
 energy = mol_scf.scf()
-print("Repulsion energy:", energy[0], "\nNuclear energy:", energy[1], "\nConvergence after", energy[2], "iterations")
+print("Repulsion energy:", energy[0], "\nNuclear energy:",
+      energy[1], "\nConvergence after", energy[2], "iterations")
 print('end')

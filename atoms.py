@@ -1,5 +1,6 @@
 import numpy as np
 from math import comb, factorial
+import scipy.special as sp
 
 class Geometry:
     """
@@ -240,6 +241,11 @@ class Matrix:
                         basis_functions.append(function)
         self.basis_functions = basis_functions
         dimension = len(basis_functions)
+
+        normalize = np.zeros(dimension)
+        for i in range(dimension):
+            normalize[i] = 1/np.sqrt(self._integral(basis_functions[i], basis_functions[i], 0))
+        
         if type_matrix == 3:
             self.matrix = np.zeros((dimension, dimension, dimension, dimension))
 
@@ -248,47 +254,28 @@ class Matrix:
                     for k in range(dimension):
                         for l in range(k, dimension):
                             if (k, l) >= (i, j):
-                                value = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
+                                integral  = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
 
+                                value = integral * normalize[i] * normalize[j] * normalize[k] * normalize[l]
                                 self.matrix[i, j, k, l] = value
                                 self.matrix[k, l, i, j] = value
 
         else:
             self.matrix = np.zeros((dimension, dimension))
-            
+
             for i in range(dimension):
                 for j in range(i, dimension):
-                    # First calculates the diagonal
-                    if i == 0:
                         if type_matrix == 0 or type_matrix == 1:
-                            self.matrix[j, j] = self._integral(basis_functions[j], basis_functions[j], type_matrix)
-                        if type_matrix == 2:
-                            value = 0
-                            for atom in molecule:
-                                value += self._integral(basis_functions[j], basis_functions[j], type_matrix, atom)
-                            self.matrix[j, j] = value
-
-                    if i != j:
-                        if type_matrix == 0:
-                            # With normalization
                             integral = self._integral(basis_functions[i], basis_functions[j], type_matrix)
-                            value = integral / (np.sqrt(self.matrix[i, i] * self.matrix[j, j]))
-                            
 
-                        if type_matrix == 1:
-                            value = self._integral(basis_functions[i], basis_functions[j], type_matrix)
-
-                        if type_matrix == 2:
-                            value = 0
+                        elif type_matrix == 2:
+                            integral = 0
                             for atom in molecule:
-                                value += self._integral(basis_functions[i], basis_functions[j], type_matrix, atom)
+                                integral += self._integral(basis_functions[i], basis_functions[j], type_matrix, atom)
 
+                        value = integral * normalize[i] * normalize[j]
                         self.matrix[i, j] = value
                         self.matrix[j, i] = value
-                
-                # Correction
-                if type_matrix == 0:
-                    self.matrix[i, i] = 1.0
             
 
     def _integral4(self, eta1, eta2, eta3, eta4):
@@ -368,17 +355,18 @@ class Matrix:
         value = alpha*(2*(eta1['l'] + eta1['m'] + eta1['n']) + 3)*self._overlap(eta1, eta2, p1, p2)
         coord = ['l', 'm', 'n']
         
+        eta1_c = eta1.copy()
         for c in coord:
-            eta1[c] += 2
-            value += -2*(alpha**2)*self._overlap(eta1, eta2, p1, p2)
-            eta1[c] -= 2
+            eta1_c[c] += 2
+            value += -2*(alpha**2)*self._overlap(eta1_c, eta2, p1, p2)
+            eta1_c[c] -= 2
 
         
         for c in coord:
-            if eta1[c] >= 2:
-                eta1[c] -= 2
-                value += -0.5*((eta1[c] + 2)*(eta1[c] + 1))*self._overlap(eta1, eta2, p1, p2)
-                eta1[c] += 2
+            if eta1_c[c] >= 2:
+                eta1_c[c] -= 2
+                value += -0.5*((eta1_c[c] + 2)*(eta1_c[c] + 1))*self._overlap(eta1_c, eta2, p1, p2)
+                eta1_c[c] += 2
 
         return value
         
@@ -500,8 +488,10 @@ class Matrix:
 
         if x < n + 1/2:
             f_max = 1/(2*n+1)
-        else:
+        elif x > 15:
             f_max = factorial2(2*n-1)*(np.sqrt(np.pi/(x**(2*n+1))))/(2**(n+1))
+        else:
+            f_max = sp.gamma(n + 0.5) * sp.gammainc(n + 0.5, x) / (2 * x**(n + 0.5))
 
         array = np.zeros(n + 1)
         array[n] = f_max
@@ -648,17 +638,67 @@ class Scf:
         E = [0.0, 0.0]
         D = self.D
 
+        s, U = np.linalg.eigh(self.S.matrix)
+        s_crit = 1e-5
+        s_mask = s > s_crit
+        s = s[s_mask]
+        U = U[:, s_mask]
+        X = U*(1/np.sqrt(s))
+
+        F_hist = []
+        G_hist = []
+
         for i in range(max_iter):
             J, K = self._coulomb_and_exchange(D)
             F = self.H_core + 2*J - K
-            D = self._density(F)
+
             E_elec = np.sum(D*(self.H_core + F))
             E[i%2] = E_elec
-            print(E[0] - E[1], E_nuc.item(), i)
-            if abs(E[0] - E[1]) < max_cond_number:
+            print(E[0] - E[1], E_elec.item(), i)
+
+            Fds = F @ D @ self.S.matrix
+            error = Fds - Fds.T
+            G = X.T @ error @ X
+            G_max = np.max(np.abs(G))
+
+            if G_max < max_cond_number:
                 self.J, self.K, self.D, self.F = J, K, D, F
                 return [E_elec.item(), E_nuc.item(), i]
-        
+            
+            F_hist.append(F)
+            G_hist.append(G)
+            if len(F_hist) > 7:
+                F_hist.pop(0)
+                G_hist.pop(0)
+
+            F_diis = F
+            if len(F_hist) > 1:
+                dim = len(F_hist)
+                B = np.zeros((dim + 1, dim + 1))
+
+                for a in range(dim):
+                    for b in range(a, dim):
+                        val = np.sum(G_hist[a] * G_hist[b])
+                        B[a, b] = val
+                        B[b, a] = val
+                
+                B[-1, :-1] = 1
+                B[:-1, -1] = 1
+                B[-1, -1] = 0
+                
+                rhs = np.zeros(dim + 1)
+                rhs[-1] = -1
+                
+                try:
+                    c = np.linalg.solve(B, rhs)
+                    F_diis = np.zeros_like(F)
+                    for idx in range(dim):
+                        F_diis += c[idx] * F_hist[idx]
+                except np.linalg.LinAlgError:
+                    pass
+            
+            D = self._density(F_diis)
+            
         return 404
 
     def _nuclear_energy(self):
@@ -699,10 +739,11 @@ class Scf:
     def _density(self, H):
         s, U = np.linalg.eigh(self.S.matrix)
         s_crit = 1e-5
-        s = s[s > s_crit]
-        U = U[:, s > s_crit]
+        s_mask = s > s_crit
+        s = s[s_mask]
+        U = U[:, s_mask]
         X = U*(1/np.sqrt(s))
-        H_ortho = X @ H @ X.T
+        H_ortho = X.T @ H @ X
         eigenvalues, C = np.linalg.eigh(H_ortho)
         Coeff = X @ C
 
