@@ -486,7 +486,7 @@ class Matrix:
     def _Boys_recurrence(self, n, x):
         exp = np.exp(-x)
 
-        if x < n + 1/2:
+        if x < 1e-15:
             f_max = 1/(2*n+1)
         elif x > 15:
             f_max = factorial2(2*n-1)*(np.sqrt(np.pi/(x**(2*n+1))))/(2**(n+1))
@@ -627,7 +627,7 @@ class Scf:
         self.T = Matrix(self.geometry, 1)
         self.V = Matrix(self.geometry, 2)
         self.Rep = Matrix(self.geometry, 3)
-        self.H_huckel = self._extended_huckel()
+        # self.H_huckel = self._extended_huckel()
         self.H_core = self.T.matrix + self.V.matrix
         self.D = self._density(self.H_core)
         self.J, self.K = self._coulomb_and_exchange(self.D)
@@ -663,7 +663,7 @@ class Scf:
 
             if G_max < max_cond_number:
                 self.J, self.K, self.D, self.F = J, K, D, F
-                return [E_elec.item(), E_nuc.item(), i]
+                return [E_elec.item(), E_nuc, i]
             
             F_hist.append(F)
             G_hist.append(G)
@@ -683,11 +683,11 @@ class Scf:
                         B[b, a] = val
                 
                 B[-1, :-1] = 1
-                B[:-1, -1] = 1
+                B[:-1, -1] = -1
                 B[-1, -1] = 0
                 
                 rhs = np.zeros(dim + 1)
-                rhs[-1] = -1
+                rhs[-1] = 1
                 
                 try:
                     c = np.linalg.solve(B, rhs)
