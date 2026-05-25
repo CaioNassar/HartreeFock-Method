@@ -26,7 +26,7 @@ class Geometry:
 
     
 
-    def __init__(self, path_coord, path_basis):
+    def __init__(self, path_coord, path_basis, charge=0):
         """
         Initializes the Geometry object.
 
@@ -58,7 +58,7 @@ class Geometry:
                     # Create a Basis object for this atom and add it to the dictionary.
                     atom_instance['GTO'] = Basis(atom_instance, element_list['basis'])
 
-            self.n_electrons = n_electrons
+            self.n_electrons = n_electrons - charge
 
     def _read_coordinates(self):
         """
@@ -606,15 +606,17 @@ class Basis:
         """
         
         radial = self._calculate(x, y, z, sel, 'p')
-        return ResultP(radial, x, y, z)
+        return ResultP(radial, x, y, z, self.Ax, self.Ay, self.Az)
 
 class Scf:
     Vsip = {
         # Valence state ionization potential, from YAeHMOP
-        'H': {'s': -13.6},
-        'C': {'s': -21.4, 'p': -11.4},
-        'O': {'s': -32.3, 'p': -14.8},
-        'N': {'s': -26.0, 'p': -13.4}
+        'H':  {'s': -13.6},
+        'He': {'s': -23.4},
+        'C':  {'s': -21.4,  'p': -11.4},
+        'N':  {'s': -26.0,  'p': -13.4},
+        'O':  {'s': -32.3,  'p': -14.8},
+        'Ne': {'s': -43.2,  'p': -20.0}
     }
 
     def __init__(self, geometry):
@@ -648,22 +650,23 @@ class Scf:
         F_hist = []
         G_hist = []
 
-        for i in range(max_iter):
+        for i in range(1, max_iter):
             J, K = self._coulomb_and_exchange(D)
             F = self.H_core + 2*J - K
 
-            E_elec = np.sum(D*(self.H_core + F))
-            E[i%2] = E_elec
-            print(E[0] - E[1], E_elec.item(), i)
-
+            # E_elec = np.sum(D*(self.H_core + F))
+            One_elec = 2 * np.sum(D*(self.H_core))
+            Two_elec = np.sum(D*(F - self.H_core))
+            
             Fds = F @ D @ self.S.matrix
             error = Fds - Fds.T
             G = X.T @ error @ X
             G_max = np.max(np.abs(G))
 
             if G_max < max_cond_number:
+                Kin = 2*np.sum(D*self.T.matrix)
                 self.J, self.K, self.D, self.F = J, K, D, F
-                return [E_elec.item(), E_nuc, i]
+                return [One_elec.item(), Two_elec.item(), E_nuc, i, Kin]
             
             F_hist.append(F)
             G_hist.append(G)
@@ -805,7 +808,7 @@ class ResultP:
     component, the class ResultP calculates the final px, py and pz values.
     """
 
-    def __init__(self, value, x, y, z):
+    def __init__(self, value, x, y, z, Ax, Ay, Az):
         """
         Initialize the ResultP object.
 
@@ -817,24 +820,27 @@ class ResultP:
         self._x = x
         self._y = y
         self._z = z
+        self.Ax = Ax
+        self.Ay = Ay
+        self.Az = Az
 
     def x(self):
         """
         Returns the value for px orbital
         """
-        return self.value * self._x
+        return self.value * (self._x - self.Ax)
         
     def y(self):
         """
         Returns the value for py orbital
         """
-        return self.value * self._y
+        return self.value * (self._y - self.Ay)
         
     def z(self):
         """
         Returns the value for pz orbital
         """
-        return self.value * self._z
+        return self.value * (self._z - self.Az)
 
 def factorial2(n):
     value = 1
