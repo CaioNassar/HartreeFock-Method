@@ -21,7 +21,6 @@ class Geometry:
         'Pa': 91, 'U': 92, 'Np': 93, 'Pu': 94, 'Am': 95, 'Cm': 96, 'Bk': 97, 'Cf': 98, 'Es': 99, 'Fm': 100,
         'Md': 101, 'No': 102, 'Lr': 103, 'Rf': 104, 'Db': 105, 'Sg': 106, 'Bh': 107, 'Hs': 108, 'Mt': 109,
         'Ds': 110, 'Rg': 111, 'Cn': 112, 'Nh': 113, 'Fl': 114, 'Mc': 115, 'Lv': 116, 'Ts': 117, 'Og': 118
-        # This class attribute maps chemical symbols to their respective atomic numbers.
     }
 
     
@@ -74,7 +73,7 @@ class Geometry:
                 self.n_atoms = int(lines[0])
 
                 atomic_dict = {}
-                ang2bohr = 1.8897259886
+                ang2bohr = 1.8897261259078
                 for i in range(self.n_atoms):
                     l = lines[i+2].strip().split()
                     symbol = l[0]
@@ -334,7 +333,6 @@ class Matrix:
         ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
 
         alpha = p1['exponent']
-
         beta = p2['exponent']
         gamma = alpha + beta
 
@@ -342,9 +340,9 @@ class Matrix:
         Py = (alpha*A['Ay'] + beta*B['Ay'])/gamma
         Pz = (alpha*A['Az'] + beta*B['Az'])/gamma
         
-        Sx = self._S(eta1['l'], eta2['l'], A['Ax'] - Px, B['Ax'] - Px,gamma)
-        Sy = self._S(eta1['m'], eta2['m'], A['Ay'] - Py, B['Ay'] - Py,gamma)
-        Sz = self._S(eta1['n'], eta2['n'], A['Az'] - Pz, B['Az'] - Pz,gamma)
+        Sx = self._S(eta1['l'], eta2['l'], Px - A['Ax'], Px - B['Ax'], gamma)
+        Sy = self._S(eta1['m'], eta2['m'], Py - A['Ay'], Py - B['Ay'], gamma)
+        Sz = self._S(eta1['n'], eta2['n'], Pz - A['Az'], Pz - B['Az'], gamma)
         
         integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
 
@@ -462,7 +460,7 @@ class Matrix:
                 for index3 in range(0, (index1 - 2*index2)//2 + 1):
                     for index4 in range(0, eta3[f'{lmn}'] + eta4[f'{lmn}'] + 1):
                         for index5 in range(0, index4//2 + 1):
-                            array[index1 + index4 - 2*(index2 + index5) - index3] += (-1)**(index4 + index3)*self._theta(index1, eta1[f'{lmn}'], eta2[f'{lmn}'], A - P, B - P, index2, gamma1)*self._theta(index4, eta3[f'{lmn}'], eta4[f'{lmn}'], C - Q, D - Q, index5, gamma2)*(2)**(2*(index2+index5-(index1 + index4)))*(delta)**(2*(index2+index5)+index3-(index1+index4))*factorial(index1 + index4 - 2*(index2 + index5))*(P  - Q)**(index1 + index4 - 2*(index3 + index2 + index5))/(factorial(index3)*factorial(index1 + index4 - 2*(index3 + index2 + index5)))
+                            array[index1 + index4 - 2*(index2 + index5) - index3] += (-1)**(index4 + index3)*self._theta(index1, eta1[f'{lmn}'], eta2[f'{lmn}'], P - A, P - B, index2, gamma1)*self._theta(index4, eta3[f'{lmn}'], eta4[f'{lmn}'], Q - C, Q - D, index5, gamma2)*(2)**(2*(index2+index5-(index1 + index4)))*(delta)**(2*(index2+index5)+index3-(index1+index4))*factorial(index1 + index4 - 2*(index2 + index5))*(P - Q)**(index1 + index4 - 2*(index3 + index2 + index5))/(factorial(index3)*factorial(index1 + index4 - 2*(index3 + index2 + index5)))
 
         return array
 
@@ -478,7 +476,7 @@ class Matrix:
         for index1 in range(0, eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1):
             for index2 in range(0, index1//2 + 1):
                 for index3 in range(0, (index1 - 2*index2)//2 + 1):
-                    array[index1 - 2*index2 - index3] += (-1)**(index1 + index3)*self._f_j(eta1[f'{lmn}'], eta2[f'{lmn}'], A - P, B - P, index1)*factorial(index1)*(C - P)**(index1 - 2*(index2 + index3))*eps**(index2 + index3)/(factorial(index2)*factorial(index3)*factorial(index1 - 2*(index2 + index3)))
+                    array[index1 - 2*index2 - index3] += (-1)**(index1 + index3)*self._f_j(eta1[f'{lmn}'], eta2[f'{lmn}'], P - A, P - B, index1)*factorial(index1)*(P - C)**(index1 - 2*(index2 + index3))*eps**(index2 + index3)/(factorial(index2)*factorial(index3)*factorial(index1 - 2*(index2 + index3)))
 
         return array
     
@@ -512,9 +510,7 @@ class Matrix:
         for j in range((l + m)//2 + 1):
             value += self._f_j(l, m, Pa, Pb, 2*j) * factorial2(2*j - 1) / (2*g)**j
 
-        value *= np.sqrt(np.pi/g)
-
-        return value      
+        return value * np.sqrt(np.pi/g)   
 
     def _f_j(self, l, m, a, b, j):
         """
@@ -635,7 +631,7 @@ class Scf:
         self.J, self.K = self._coulomb_and_exchange(self.D)
         self.F = self.H_core + 2*self.J - self.K 
 
-    def scf(self, max_cond_number = 1e-5, max_iter = 100):
+    def scf(self, max_cond_number = 1e-5, max_iter = 20):
         E_nuc = self._nuclear_energy()
         E = [0.0, 0.0]
         D = self.D
@@ -653,10 +649,6 @@ class Scf:
         for i in range(1, max_iter):
             J, K = self._coulomb_and_exchange(D)
             F = self.H_core + 2*J - K
-
-            # E_elec = np.sum(D*(self.H_core + F))
-            One_elec = 2 * np.sum(D*(self.H_core))
-            Two_elec = np.sum(D*(F - self.H_core))
             
             Fds = F @ D @ self.S.matrix
             error = Fds - Fds.T
@@ -664,6 +656,9 @@ class Scf:
             G_max = np.max(np.abs(G))
 
             if G_max < max_cond_number:
+                # E_elec = np.sum(D*(self.H_core + F))
+                One_elec = 2 * np.sum(D*(self.H_core))
+                Two_elec = np.sum(D*(F - self.H_core))
                 Kin = 2*np.sum(D*self.T.matrix)
                 self.J, self.K, self.D, self.F = J, K, D, F
                 return [One_elec.item(), Two_elec.item(), E_nuc, i, Kin]

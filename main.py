@@ -3,7 +3,7 @@ import pandas as pd
 from time import time
 
 basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
-molecules = ['h2', 'he', 'h2o', 'n2', 'co2', 'ne', 'h2o6+']
+molecules = ['he', 'h2', 'ne', 'h2o6+', 'h2o', 'n2', 'co2']
 
 for geo in molecules:
       if geo == 'h2o6+':
