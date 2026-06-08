@@ -1,6 +1,7 @@
 import numpy as np
 from math import comb, factorial
 import scipy.special as sp
+from ntpath import basename, splitext
 
 class Geometry:
     """
@@ -40,6 +41,7 @@ class Geometry:
         self.atom_list = []
         self.n_atoms = 0 # Number of atoms in the element.
         self.n_electrons = 0
+        self.charge = charge
 
         # Reads the file of the atomic coordinates, sets self.atoms.
         first_file = self._read_coordinates()
@@ -666,7 +668,13 @@ class Scf:
             if G_max < max_cond_number:
                 Kin = 2*np.sum(D*self.T.matrix)
                 self.J, self.K, self.D, self.F = J, K, D, F
-                return [One_elec.item(), Two_elec.item(), E_nuc, i, Kin]
+                if self.geometry.charge == 0:
+                    print(f"----------------- For {splitext(basename(self.geometry.path_coord))[0]} molecule -----------------")
+                else:
+                    print(f"----------------- For {splitext(basename(self.geometry.path_coord))[0]}{self.geometry.charge}+ molecule -----------------")
+                print("Total SCF energy:", One_elec.item() + Two_elec.item() + E_nuc, "\nOne-electron energy:", One_elec.item(), "\nTwo-electron energy:", Two_elec.item(), "\nNuclear repulsion energy:", E_nuc, "\nKinetic energy:", Kin, "\nConvergence after", i, "iterations")
+                mulliken = self._mulliken_charges()
+                return [One_elec.item(), Two_elec.item(), E_nuc, Kin]
             
             F_hist.append(F)
             G_hist.append(G)
@@ -701,8 +709,37 @@ class Scf:
                     pass
             
             D = self._density(F_diis)
-            
         return 404
+
+    def _mulliken_charges(self):
+        charge_density = np.sum(2*self.D * self.S.matrix, axis=1)
+        center_j = None
+        electronic_charge = 0.0
+        current_symbol = ''
+        print("\nMulliken charges per centre and basis function type")
+        for mu, basis_function in enumerate(self.basis):
+            center_i = [basis_function['center']['Ax'], basis_function['center']['Ay'], basis_function['center']['Az']]
+            symbol = basis_function['symbol']
+
+            if center_j != center_i:
+                if center_j is not None:
+                    charge = self.geometry.atomic_number[current_symbol] - electronic_charge
+                    print(f"Total Electronic Charge = {electronic_charge:.4f} \nTotal Charge = {charge:.4f} \n")
+                
+                center_j = center_i
+                current_symbol = symbol
+                electronic_charge = 0.0
+                print(current_symbol)
+
+            q_mu = charge_density[mu]
+            print(f'l={basis_function['l']} m={basis_function['m']} n={basis_function['n']}: {q_mu:.4f}')
+            electronic_charge += q_mu
+
+        if center_j is not None:
+            charge = self.geometry.atomic_number[basis_function['symbol']] - electronic_charge
+            print(f"Total Electronic Charge = {electronic_charge:.4f} \nTotal Charge = {charge:.4f} \n")
+
+        return 0
 
     def _nuclear_energy(self):
         atoms = self.geometry.atom_list

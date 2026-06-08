@@ -3,13 +3,17 @@ import pandas as pd
 from time import time
 
 basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
-molecules = ['h2', 'he', 'h2o', 'n2', 'co2', 'ne', 'h2o6+']
+molecules = ['h2', 'he', 'ne+8', 'ne', 'h2o6+', 'h2o', 'n2', 'co2']
 
 for geo in molecules:
       if geo == 'h2o6+':
             molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\h2o.txt'
             t_0 = time()
             mol = Geometry(molecule_file, basis_file, 6)
+      elif geo == 'ne+8':
+            molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\ne.txt'
+            t_0 = time()
+            mol = Geometry(molecule_file, basis_file, 8)
       else:
             molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\{geo}.txt'
             t_0 = time()
@@ -71,6 +75,4 @@ for geo in molecules:
 
       energy = mol_scf.scf()
       t_f = time()
-      print(f"----------------- For {geo} molecule -----------------")
-      print("Total SCF energy:", energy[0] + energy[1] + energy[2], "\nOne-electron energy:", energy[0], "\nTwo-electron energy:", energy[1], "\nNuclear repulsion energy:", energy[2], "\nKinetic energy:", energy[4], "\nConvergence after", energy[3], "iterations")
       print("Time in calculation: ", (t_f - t_0), "\n")
