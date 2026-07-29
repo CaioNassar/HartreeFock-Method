@@ -2,7 +2,8 @@ import numpy as np
 from math import comb, factorial
 import scipy.special as sp
 from ntpath import basename, splitext
-
+from tempfile import TemporaryDirectory
+from pathlib import Path
 class Geometry:
     """
     The class Geometry stores the 3D coordinates, atomic composition and basis set of the atoms of the molecule.
@@ -42,6 +43,7 @@ class Geometry:
         self.n_atoms = 0 # Number of atoms in the element.
         self.n_electrons = 0
         self.charge = charge
+        self.ang2bohr = 1.88972612590778
 
         # Reads the file of the atomic coordinates, sets self.atoms.
         first_file = self._read_coordinates()
@@ -76,15 +78,14 @@ class Geometry:
                 self.n_atoms = int(lines[0])
 
                 atomic_dict = {}
-                ang2bohr = 1.8897259886
                 for i in range(self.n_atoms):
                     l = lines[i+2].strip().split()
                     symbol = l[0]
                     atom_coord = {
                         'symbol': symbol,
-                        'Ax': float(l[1]) * ang2bohr,
-                        'Ay': float(l[2]) * ang2bohr,
-                        'Az': float(l[3]) * ang2bohr
+                        'Ax': float(l[1]) * self.ang2bohr,
+                        'Ay': float(l[2]) * self.ang2bohr,
+                        'Az': float(l[3]) * self.ang2bohr
                     }
 
                     self.atom_list.append(atom_coord)
@@ -168,6 +169,24 @@ class Geometry:
             # Exception if happens some error.
             print(f'Something went wrong when trying to read the file: {e}')
             return False
+            
+    def potential_energy_curve(self, distances):
+        if self.n_atoms != 2:
+            raise ValueError('This function only works with 2 atoms')
+
+        symbols = [atom['symbol'] for atom in self.atom_list]
+        curve = []
+        for distance in distances:
+            z = distance/2
+            xyz = f"2\n\n{symbols[0]} 0.0 0.0 {-z}\n{symbols[1]} 0.0 0.0 {z}\n"
+            with TemporaryDirectory() as tmp_dir:
+                tmp_path = Path(tmp_dir) / 'geometry.txt'
+                tmp_path.write_text(xyz)
+                mol = Geometry(str(tmp_path), self.path_basis, self.charge)
+                one_elec, two_elec, e_nuc, _ = Scf(mol).scf()
+            curve.append((distance, one_elec + two_elec + e_nuc))
+
+        return curve
 
 class Matrix:
     Quantum_numbers = {
@@ -336,7 +355,6 @@ class Matrix:
         ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
 
         alpha = p1['exponent']
-
         beta = p2['exponent']
         gamma = alpha + beta
 
@@ -344,9 +362,9 @@ class Matrix:
         Py = (alpha*A['Ay'] + beta*B['Ay'])/gamma
         Pz = (alpha*A['Az'] + beta*B['Az'])/gamma
         
-        Sx = self._S(eta1['l'], eta2['l'], A['Ax'] - Px, B['Ax'] - Px,gamma)
-        Sy = self._S(eta1['m'], eta2['m'], A['Ay'] - Py, B['Ay'] - Py,gamma)
-        Sz = self._S(eta1['n'], eta2['n'], A['Az'] - Pz, B['Az'] - Pz,gamma)
+        Sx = self._S(eta1['l'], eta2['l'], Px - A['Ax'], Px - B['Ax'],gamma)
+        Sy = self._S(eta1['m'], eta2['m'], Py - A['Ay'], Py - B['Ay'],gamma)
+        Sz = self._S(eta1['n'], eta2['n'], Pz - A['Az'], Pz - B['Az'],gamma)
         
         integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
 
@@ -461,11 +479,13 @@ class Matrix:
 
         for index1 in range(0, eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1):
             for index2 in range(0, index1//2 + 1):
-                for index3 in range(0, (index1 - 2*index2)//2 + 1):
+                for index3 in range(0, (index1 + eta3[f'{lmn}'] + eta4[f'{lmn}'] - 2*index2)//2 + 1):
                     for index4 in range(0, eta3[f'{lmn}'] + eta4[f'{lmn}'] + 1):
                         for index5 in range(0, index4//2 + 1):
-                            array[index1 + index4 - 2*(index2 + index5) - index3] += (-1)**(index4 + index3)*self._theta(index1, eta1[f'{lmn}'], eta2[f'{lmn}'], A - P, B - P, index2, gamma1)*self._theta(index4, eta3[f'{lmn}'], eta4[f'{lmn}'], C - Q, D - Q, index5, gamma2)*(2)**(2*(index2+index5-(index1 + index4)))*(delta)**(2*(index2+index5)+index3-(index1+index4))*factorial(index1 + index4 - 2*(index2 + index5))*(P  - Q)**(index1 + index4 - 2*(index3 + index2 + index5))/(factorial(index3)*factorial(index1 + index4 - 2*(index3 + index2 + index5)))
-
+                            if index3 > (index1 + index4 - 2*(index2 + index5))//2:
+                                continue
+                            array[index1 + index4 - 2*(index2 + index5) - index3] += (-1)**(index4 + index3)*self._theta(index1, eta1[f'{lmn}'], eta2[f'{lmn}'], P - A, P - B, index2, gamma1)*self._theta(index4, eta3[f'{lmn}'], eta4[f'{lmn}'], Q - C, Q - D, index5, gamma2)*(2)**(2*(index2+index5-(index1 + index4)))*(delta)**(2*(index2+index5)+index3-(index1+index4))*factorial(index1 + index4 - 2*(index2 + index5))*(Q - P)**(index1 + index4 - 2*(index3 + index2 + index5))/(factorial(index3)*factorial(index1 + index4 - 2*(index3 + index2 + index5)))
+                            
         return array
 
     def _theta(self, j, l, m, a, b, r, gamma):
@@ -480,7 +500,7 @@ class Matrix:
         for index1 in range(0, eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1):
             for index2 in range(0, index1//2 + 1):
                 for index3 in range(0, (index1 - 2*index2)//2 + 1):
-                    array[index1 - 2*index2 - index3] += (-1)**(index1 + index3)*self._f_j(eta1[f'{lmn}'], eta2[f'{lmn}'], A - P, B - P, index1)*factorial(index1)*(C - P)**(index1 - 2*(index2 + index3))*eps**(index2 + index3)/(factorial(index2)*factorial(index3)*factorial(index1 - 2*(index2 + index3)))
+                    array[index1 - 2*index2 - index3] += (-1)**(index1 + index3)*self._f_j(eta1[f'{lmn}'], eta2[f'{lmn}'], P - A, P - B, index1)*factorial(index1)*(P - C)**(index1 - 2*(index2 + index3))*eps**(index2 + index3)/(factorial(index2)*factorial(index3)*factorial(index1 - 2*(index2 + index3)))
 
         return array
     
@@ -490,8 +510,6 @@ class Matrix:
 
         if x < 1e-15:
             f_max = 1/(2*n+1)
-        elif x > 15:
-            f_max = factorial2(2*n-1)*(np.sqrt(np.pi/(x**(2*n+1))))/(2**(n+1))
         else:
             f_max = sp.gamma(n + 0.5) * sp.gammainc(n + 0.5, x) / (2 * x**(n + 0.5))
 
