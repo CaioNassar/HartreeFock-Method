@@ -43,6 +43,7 @@ class Geometry:
         self.n_atoms = 0 # Number of atoms in the element.
         self.n_electrons = 0
         self.charge = charge
+        self.cartesian = 0
         self.ang2bohr = 1.88972612590778
 
         # Reads the file of the atomic coordinates, sets self.atoms.
@@ -60,7 +61,7 @@ class Geometry:
                 n_electrons += self.atomic_number[symbol]*len(element_list['instance'])
                 for atom_instance in element_list['instance']:
                     # Create a Basis object for this atom and add it to the dictionary.
-                    atom_instance['GTO'] = Basis(atom_instance, element_list['basis'])
+                    atom_instance['GTO'] = Basis(atom_instance, element_list['basis'], self.cartesian)
 
             self.n_electrons = n_electrons - charge
 
@@ -123,6 +124,8 @@ class Geometry:
                 lines_iterator = iter(file)
                 for line in lines_iterator:
                     line = line.strip()
+                    if 'cartesian' in line:
+                        self.cartesian = 1
                     if '/' in line and 'inline' in line:
                         # Search the flag(/inline) to read the basis set of an atom.
                         current_element = line.split()[0]
@@ -554,7 +557,7 @@ class Basis:
     An instance of this class represents a single atom of the molecule.
     """
 
-    def __init__(self, center, basis_data):
+    def __init__(self, center, basis_data, cartesian_basis):
         """
         Initializes the Atom object.
 
@@ -567,6 +570,7 @@ class Basis:
         self.Ay = center['Ay']
         self.Az = center['Az']
         self.basis = basis_data
+        self.cartesian = cartesian_basis
 
     def _calculate(self, x, y, z, sel, orbital):
         """
@@ -627,16 +631,37 @@ class Basis:
         
         radial = self._calculate(x, y, z, sel, 'p')
         return ResultP(radial, x, y, z, self.Ax, self.Ay, self.Az)
+    
+    def d(self, x, y, z, sel=0):
+            """
+            Returns the value for d-orbitals.
+            ResultD object calculates for the determined component.
+    
+            Args:
+                x, y, z (float): coordinates of evaluating point.
+                sel (int): selects the contractiion option.
+            """
+
+            radial = self._calculate(x, y, z, sel, 'd')
+
+            if self.cartesian:
+                return ResultD_Cartesian(radial, x, y, z, self.Ax, self.Ay, self.Az)
+            
+            return ResultD_Spherical(radial, x, y, z, self.Ax, self.Ay, self.Az)
 
 class Scf:
+    eV2Eh = 1/27.211386245981
     Vsip = {
         # Valence state ionization potential, from YAeHMOP
-        'H':  {'s': -13.6},
-        'He': {'s': -23.4},
-        'C':  {'s': -21.4,  'p': -11.4},
-        'N':  {'s': -26.0,  'p': -13.4},
-        'O':  {'s': -32.3,  'p': -14.8},
-        'Ne': {'s': -43.2,  'p': -20.0}
+        'H':  {'s': -13.6 * eV2Eh},
+        'He': {'s': -23.4 * eV2Eh},
+        'Li': {'s': -5.4 * eV2Eh, 'p': -3.5 * eV2Eh},
+        'B': {'s': -15.2 * eV2Eh, 'p': -8.5 * eV2Eh},
+        'C':  {'s': -21.4 * eV2Eh,  'p': -11.4 * eV2Eh},
+        'N':  {'s': -26.0 * eV2Eh,  'p': -13.4 * eV2Eh},
+        'O':  {'s': -32.3 * eV2Eh,  'p': -14.8 * eV2Eh},
+        'F': {'s': -40.0 * eV2Eh, 'p': -18.1 * eV2Eh},
+        'Ne': {'s': -43.2 * eV2Eh,  'p': -20.0 * eV2Eh}
     }
 
     def __init__(self, geometry):
@@ -649,9 +674,9 @@ class Scf:
         self.T = Matrix(self.geometry, 1)
         self.V = Matrix(self.geometry, 2)
         self.Rep = Matrix(self.geometry, 3)
-        # self.H_huckel = self._extended_huckel()
+        self.H_huckel = self._extended_huckel()
         self.H_core = self.T.matrix + self.V.matrix
-        self.D = self._density(self.H_core)
+        self.D = self._density(self.H_huckel)
         self.J, self.K = self._coulomb_and_exchange(self.D)
         self.F = self.H_core + 2*self.J - self.K 
 
@@ -872,30 +897,102 @@ class ResultP:
             x, y, z (float): coordinates of evaluation point.
         """
         self.value = value
-        self._x = x
-        self._y = y
-        self._z = z
-        self.Ax = Ax
-        self.Ay = Ay
-        self.Az = Az
+        self.dx = x - Ax
+        self.dy = y - Ay
+        self.dz = z - Az
 
     def x(self):
         """
         Returns the value for px orbital
         """
-        return self.value * (self._x - self.Ax)
+        return self.value * self.dx
         
     def y(self):
         """
         Returns the value for py orbital
         """
-        return self.value * (self._y - self.Ay)
+        return self.value * self.dy
         
     def z(self):
         """
         Returns the value for pz orbital
         """
-        return self.value * (self._z - self.Az)
+        return self.value * self.dz
+
+class ResultD_Spherical:
+    """
+    Calculates the 5 Spherical d-orbitals: xx, yy, zz, xy, xz, yz.
+    """
+
+    def __init__(self, value, x, y, z, Ax, Ay, Az):
+        """
+        Initialize the ResultD_Spherical object.
+
+        Args:
+            value (float): the radial part of d-orbital already calculated.
+            x, y, z (float): coordinates of evaluation point.
+            Ax, Ay, Az (float): coordinates of the orbital center.
+        """
+        self.value = value
+        self.dx = x - Ax
+        self.dy = y - Ay
+        self.dz = z - Az
+
+        self.dx2 = self.dx ** 2
+        self.dy2 = self.dy ** 2
+        self.dz2 = self.dz ** 2
+
+    def z2(self):
+        angular = self.dz2 - 0.5*(self.dx2 + self.dy2)
+        return self.value * angular
+        
+    def xz(self):
+        angular = np.sqrt(3) * self.dx * self.dz
+        return self.value * angular
+        
+    def yz(self):
+        angular = np.sqrt(3) * self.dy * self.dz
+        return self.value * angular
+        
+    def x2_y2(self):
+        angular = (0.5 * np.sqrt(3)) *(self.dx2 - self.dy2)
+        return self.value * angular
+        
+    def xy(self):
+        angular = np.sqrt(3) * self.dx * self.dy
+        return self.value * angular
+
+class ResultD_Cartesian:
+    """
+    Calculates the 6 Cartesian d-orbitals: xx, yy, zz, xy, xz, yz.
+    """
+    def __init__(self, value, x, y, z, Ax, Ay, Az):
+        self.value = value
+        self.dx = x - Ax
+        self.dy = y - Ay
+        self.dz = z - Az
+
+        self.dx2 = self.dx ** 2
+        self.dy2 = self.dy ** 2
+        self.dz2 = self.dz ** 2
+
+    def xx(self):
+        return self.value * self.dx2
+        
+    def yy(self):
+        return self.value * self.dy2
+        
+    def zz(self):
+        return self.value * self.dz2
+        
+    def xy(self):
+        return self.value * (self.dx * self.dy)
+        
+    def xz(self):
+        return self.value * (self.dx * self.dz)
+        
+    def yz(self):
+        return self.value * (self.dy * self.dz)
 
 def factorial2(n):
     value = 1

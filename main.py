@@ -6,8 +6,8 @@ from time import time
 from contextlib import redirect_stdout
 import io
 
-basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
-molecules = ['b2', 'c2', 'co', 'f2', 'hf', 'li2', 'lif', 'lih', 'o2', 'he', 'h2', 'ne+8', 'ne+6', 'ne+4', 'ne', 'h2o6+', 'h2o', 'he2', 'n2', 'co2']
+basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\cc-pvdz.txt'
+molecules = ['kr']
 
 
 for geo in molecules:
@@ -104,5 +104,5 @@ for geo in molecules:
       ax.set_ylabel('SCF Energy (Eh)')
       ax.legend()
 
-      fig.savefig(f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\scf_curve_{geo}.png', dpi=200)
+      fig.savefig(f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\scf_core_{geo}.png', dpi=200)
       plt.close(fig)
