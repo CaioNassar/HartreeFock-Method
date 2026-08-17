@@ -5,34 +5,43 @@ import numpy as np
 from time import time
 from contextlib import redirect_stdout
 import io
+from line_profiler import LineProfiler
+import os
 
-basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\cc-pvdz.txt'
-molecules = ['kr']
+basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
+xyz_path = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz'
+
+molecules = [arquivo.replace('.txt', '') for arquivo in os.listdir(xyz_path) if arquivo.endswith('.txt')]
 
 
 for geo in molecules:
-      if geo == 'h2o6+':
-            molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\h2o.txt'
-            t_0 = time()
-            mol = Geometry(molecule_file, basis_file, 6)
-      elif geo == 'ne+8':
-            molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\ne.txt'
-            t_0 = time()
-            mol = Geometry(molecule_file, basis_file, 8)
-      elif geo == 'ne+6':
-            molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\ne.txt'
-            t_0 = time()
-            mol = Geometry(molecule_file, basis_file, 6)
-      elif geo == 'ne+4':
-            molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\ne.txt'
-            t_0 = time()
-            mol = Geometry(molecule_file, basis_file, 4)
-      else:
-            molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\{geo}.txt'
-            t_0 = time()
-            mol = Geometry(molecule_file, basis_file)
+    if geo == 'br2':
+        continue
 
-      mol_scf = Scf(mol)
+    if geo == 'h2o6+':
+        molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\h2o.txt'
+        t_0 = time()
+        mol = Geometry(molecule_file, basis_file, 6)
+    elif geo == 'ne+8':
+        molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\ne.txt'
+        t_0 = time()
+        mol = Geometry(molecule_file, basis_file, 8)
+    elif geo == 'ne+6':
+        molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\ne.txt'
+        t_0 = time()
+        mol = Geometry(molecule_file, basis_file, 6)
+    elif geo == 'ne+4':
+        molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\ne.txt'
+        t_0 = time()
+        mol = Geometry(molecule_file, basis_file, 4)
+    else:
+        molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\{geo}.txt'
+        t_0 = time()
+        mol = Geometry(molecule_file, basis_file)
+
+
+
+    mol_scf = Scf(mol)
 
     # elements = list(mol.atoms.keys())
     # print(elements)
@@ -86,23 +95,23 @@ for geo in molecules:
     # dfA = pd.DataFrame(mol_scf.K)
     # dfA.to_excel('Exchange_matrix.xlsx', index=False, header=False)
 
-      energy = mol_scf.scf()
-      t_f = time()
-      print("Time in calculation: ", (t_f - t_0), "\n")
+    energy = mol_scf.scf()
+    t_f = time()
+    print("Time in calculation: ", (t_f - t_0), "\n")
 
-      if mol.n_atoms != 2:
-            continue
-      scf_dist = np.linspace(0.45, 3, 25)
-      with redirect_stdout(io.StringIO()):
-            curve = mol.potential_energy_curve(scf_dist)
+    # if mol.n_atoms != 2:
+    #       continue
+    # scf_dist = np.linspace(0.45, 3, 25)
+    # with redirect_stdout(io.StringIO()):
+    #       curve = mol.potential_energy_curve(scf_dist)
 
-      fig, ax = plt.subplots()
-      x_vals, y_vals = zip(*curve)
-      ax.plot(x_vals, y_vals, label=geo)
+    # fig, ax = plt.subplots()
+    # x_vals, y_vals = zip(*curve)
+    # ax.plot(x_vals, y_vals, label=geo)
 
-      ax.set_xlabel('Internuclear Distance (Å)')
-      ax.set_ylabel('SCF Energy (Eh)')
-      ax.legend()
+    # ax.set_xlabel('Internuclear Distance (Å)')
+    # ax.set_ylabel('SCF Energy (Eh)')
+    # ax.legend()
 
-      fig.savefig(f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\scf_core_{geo}.png', dpi=200)
-      plt.close(fig)
+    # fig.savefig(f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\scf_core_{geo}.png', dpi=200)
+    # plt.close(fig)

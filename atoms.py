@@ -4,6 +4,66 @@ import scipy.special as sp
 from ntpath import basename, splitext
 from tempfile import TemporaryDirectory
 from pathlib import Path
+import ctypes
+import os
+
+base_dir = os.path.dirname(os.path.abspath(__file__))
+lib_path = os.path.join(base_dir, "integrals.dll")
+
+c_lib = ctypes.CDLL(lib_path)
+
+c_lib.calculate_B.argtypes = [
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,     
+    ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, 
+    ctypes.c_double, ctypes.c_double,                           
+    ctypes.c_double, ctypes.c_double, ctypes.c_double,          
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS')
+]
+c_lib.calculate_B.restype = None
+
+c_lib.calculate_A.argtypes = [
+    ctypes.c_int, ctypes.c_int,                                 
+    ctypes.c_double, ctypes.c_double, ctypes.c_double,          
+    ctypes.c_double, ctypes.c_double,                           
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS')
+]
+c_lib.calculate_A.restype = None
+
+c_lib.boys_recurrence.argtypes = [
+    ctypes.c_int, ctypes.c_double,
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS')
+]
+c_lib.boys_recurrence.restype = None
+
+c_lib.S_integral.argtypes = [
+    ctypes.c_int, ctypes.c_int,                  
+    ctypes.c_double, ctypes.c_double, ctypes.c_double 
+]
+c_lib.S_integral.restype = ctypes.c_double
+
+c_lib.repulsion_integral4.argtypes = [
+    np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),    # lmn
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # A
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # B
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # C
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # D
+    ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,                  # nums
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # exp1
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # coef1
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # exp2
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # coef2
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # exp3
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # coef3
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # exp4
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS')   # coef4
+]
+c_lib.repulsion_integral4.restype = ctypes.c_double 
+
+c_lib.normalize_N.argtypes = [
+    ctypes.c_double, ctypes.c_int, ctypes.c_int, ctypes.c_int
+]
+c_lib.normalize_N.restype = ctypes.c_double
+
 class Geometry:
     """
     The class Geometry stores the 3D coordinates, atomic composition and basis set of the atoms of the molecule.
@@ -255,11 +315,12 @@ class Matrix:
                             'primitives': [],
                         }
                         for i in range(data['number_of_primitives']):
-                            coef = float(data['coefficients'][i][k])
+                            coef = float(data['coefficients'][i][k]) 
                             if coef != 0.0: 
+                                exponent = data['exponents'][i]
                                 function['primitives'].append({
-                                    'exponent': data['exponents'][i],
-                                    'coefficient': coef
+                                    'exponent': exponent,
+                                    'coefficient': coef * c_lib.normalize_N(exponent, l, m, n)
                                 })
                         
                         basis_functions.append(function)
@@ -282,7 +343,14 @@ class Matrix:
 
                                 value = integral * normalize[i] * normalize[j] * normalize[k] * normalize[l]
                                 self.matrix[i, j, k, l] = value
+                                self.matrix[i, j, l, k] = value
+                                self.matrix[j, i, k, l] = value
+                                self.matrix[j, i, l, k] = value
                                 self.matrix[k, l, i, j] = value
+                                self.matrix[k, l, j, i] = value
+                                self.matrix[l, k, i, j] = value
+                                self.matrix[l, k, j, i] = value
+                             
 
         else:
             self.matrix = np.zeros((dimension, dimension))
@@ -303,59 +371,65 @@ class Matrix:
             
 
     def _integral4(self, eta1, eta2, eta3, eta4):
-        value = 0.0
-    
-        for primitive1 in eta1['primitives']:
-            for primitive2 in eta2['primitives']:
-                for primitive3 in eta3['primitives']:
-                    for primitive4 in eta4['primitives']:
-                        C_a = primitive1['coefficient']
-                        C_b = primitive2['coefficient']
-                        C_c = primitive3['coefficient']
-                        C_d = primitive4['coefficient']
+        A = np.array([eta1['center']['Ax'], eta1['center']['Ay'], eta1['center']['Az']], dtype=np.float64)
+        B = np.array([eta2['center']['Ax'], eta2['center']['Ay'], eta2['center']['Az']], dtype=np.float64)
+        C = np.array([eta3['center']['Ax'], eta3['center']['Ay'], eta3['center']['Az']], dtype=np.float64)
+        D = np.array([eta4['center']['Ax'], eta4['center']['Ay'], eta4['center']['Az']], dtype=np.float64)
 
-                        alpha1 = primitive1['exponent']
-                        beta1 = primitive2['exponent']
-                        alpha2 = primitive3['exponent']
-                        beta2 = primitive4['exponent']
+        lmn = np.array([
+            eta1['l'], eta1['m'], eta1['n'],
+            eta2['l'], eta2['m'], eta2['n'],
+            eta3['l'], eta3['m'], eta3['n'],
+            eta4['l'], eta4['m'], eta4['n']
+        ], dtype=np.int32)
 
-                        value += (self._repulsion(eta1, eta2, eta3, eta4, primitive1, primitive2, primitive3, primitive4) *
-                                  C_a * C_b * self._N(alpha1, eta1['l'], eta1['m'], eta1['n']) * self._N(beta1, eta2['l'], eta2['m'], eta2['n']) *
-                                  C_c * C_d * self._N(alpha2, eta3['l'], eta3['m'], eta3['n']) * self._N(beta2, eta4['l'], eta4['m'], eta4['n']))
-    
+        e1 = np.array([p['exponent'] for p in eta1['primitives']], dtype=np.float64)
+        c1 = np.array([p['coefficient'] for p in eta1['primitives']], dtype=np.float64)
+        e2 = np.array([p['exponent'] for p in eta2['primitives']], dtype=np.float64)
+        c2 = np.array([p['coefficient'] for p in eta2['primitives']], dtype=np.float64)
+        e3 = np.array([p['exponent'] for p in eta3['primitives']], dtype=np.float64)
+        c3 = np.array([p['coefficient'] for p in eta3['primitives']], dtype=np.float64)
+        e4 = np.array([p['exponent'] for p in eta4['primitives']], dtype=np.float64)
+        c4 = np.array([p['coefficient'] for p in eta4['primitives']], dtype=np.float64)
+
+        value = c_lib.repulsion_integral4(
+            lmn, A, B, C, D,
+            len(e1), len(e2), len(e3), len(e4),
+            e1, c1, e2, c2, e3, c3, e4, c4
+        )
+        
         return value
 
     def _integral(self, eta1, eta2, type_matrix = 0, nucleus = 0):
         value = 0.0
-    
+        A = eta1['center']
+        B = eta2['center']
+
+        ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
+        
         for primitive1 in eta1['primitives']:
             for primitive2 in eta2['primitives']:
                 C_a = primitive1['coefficient']
                 C_b = primitive2['coefficient']
 
-                alpha = primitive1['exponent']
-                beta = primitive2['exponent']
-
                 integral = 0.0
 
                 if type_matrix == 0:
-                    integral += self._overlap(eta1, eta2, primitive1, primitive2)
+                    integral += self._overlap(eta1, eta2, primitive1, primitive2, ab2)
             
                 if type_matrix == 1:
-                    integral += self._kinetic_energy(eta1, eta2, primitive1, primitive2)    
+                    integral += self._kinetic_energy(eta1, eta2, primitive1, primitive2, ab2)    
 
                 if type_matrix == 2:
-                    integral += self._nuclear_attraction(eta1, eta2, primitive1, primitive2, nucleus)
+                    integral += self._nuclear_attraction(eta1, eta2, primitive1, primitive2, nucleus, ab2)
 
-                value += C_a*C_b*integral*self._N(alpha, eta1['l'], eta1['m'], eta1['n'])*self._N(beta, eta2['l'], eta2['m'], eta2['n'])
+                value += C_a*C_b*integral
 
         return value
     
-    def _overlap(self, eta1, eta2, p1, p2):
+    def _overlap(self, eta1, eta2, p1, p2, ab2):
         A = eta1['center']
         B = eta2['center']
-
-        ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
 
         alpha = p1['exponent']
         beta = p2['exponent']
@@ -365,39 +439,38 @@ class Matrix:
         Py = (alpha*A['Ay'] + beta*B['Ay'])/gamma
         Pz = (alpha*A['Az'] + beta*B['Az'])/gamma
         
-        Sx = self._S(eta1['l'], eta2['l'], Px - A['Ax'], Px - B['Ax'],gamma)
-        Sy = self._S(eta1['m'], eta2['m'], Py - A['Ay'], Py - B['Ay'],gamma)
-        Sz = self._S(eta1['n'], eta2['n'], Pz - A['Az'], Pz - B['Az'],gamma)
-        
+        Sx = c_lib.S_integral(eta1['l'], eta2['l'], Px - A['Ax'], Px - B['Ax'], gamma)
+        Sy = c_lib.S_integral(eta1['m'], eta2['m'], Py - A['Ay'], Py - B['Ay'], gamma)
+        Sz = c_lib.S_integral(eta1['n'], eta2['n'], Pz - A['Az'], Pz - B['Az'], gamma)    
+
         integral = np.exp(-alpha*beta*ab2/gamma)*Sx*Sy*Sz
 
         return integral
     
-    def _kinetic_energy(self, eta1, eta2, p1, p2):
+    def _kinetic_energy(self, eta1, eta2, p1, p2, ab2):
         alpha = p1['exponent']
-        value = alpha*(2*(eta1['l'] + eta1['m'] + eta1['n']) + 3)*self._overlap(eta1, eta2, p1, p2)
+        value = alpha*(2*(eta1['l'] + eta1['m'] + eta1['n']) + 3)*self._overlap(eta1, eta2, p1, p2, ab2)
         coord = ['l', 'm', 'n']
         
         eta1_c = eta1.copy()
         for c in coord:
             eta1_c[c] += 2
-            value += -2*(alpha**2)*self._overlap(eta1_c, eta2, p1, p2)
+            value += -2*(alpha**2)*self._overlap(eta1_c, eta2, p1, p2, ab2)
             eta1_c[c] -= 2
 
         
         for c in coord:
             if eta1_c[c] >= 2:
                 eta1_c[c] -= 2
-                value += -0.5*((eta1_c[c] + 2)*(eta1_c[c] + 1))*self._overlap(eta1_c, eta2, p1, p2)
+                value += -0.5*((eta1_c[c] + 2)*(eta1_c[c] + 1))*self._overlap(eta1_c, eta2, p1, p2, ab2)
                 eta1_c[c] += 2
 
         return value
         
-    def _nuclear_attraction(self, eta1, eta2, p1, p2, nucleus):
+    def _nuclear_attraction(self, eta1, eta2, p1, p2, nucleus, ab2):
         A = eta1['center']
         B = eta2['center']
         C = nucleus['center']
-        ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2
 
         alpha = p1['exponent']
         beta = p2['exponent']
@@ -412,143 +485,31 @@ class Matrix:
         
         pc2 = (P['Px'] - C['Ax'])**2 + (P['Py'] - C['Ay'])**2 + (P['Pz'] - C['Az'])**2
 
-        A_x = self._A('l', eta1, eta2, A['Ax'], B['Ax'], C['Ax'], P['Px'], eps)
-        A_y = self._A('m', eta1, eta2, A['Ay'], B['Ay'], C['Ay'], P['Py'], eps)
-        A_z = self._A('n', eta1, eta2, A['Az'], B['Az'], C['Az'], P['Pz'], eps)
+        l1, l2 = eta1['l'], eta2['l']
+        A_x = np.zeros(l1 + l2 + 1, dtype=np.float64)
+        c_lib.calculate_A(l1, l2, A['Ax'], B['Ax'], C['Ax'], P['Px'], eps, A_x)
 
-        v_max = eta1['l'] + eta1['m'] + eta1['n'] + eta2['l'] + eta2['m'] + eta2['n']
+        m1, m2 = eta1['m'], eta2['m']
+        A_y = np.zeros(m1 + m2 + 1, dtype=np.float64)
+        c_lib.calculate_A(m1, m2, A['Ay'], B['Ay'], C['Ay'], P['Py'], eps, A_y)
 
-        boys = self._Boys_recurrence(v_max, gamma*pc2)
+        n1, n2 = eta1['n'], eta2['n']
+        A_z = np.zeros(n1 + n2 + 1, dtype=np.float64)
+        c_lib.calculate_A(n1, n2, A['Az'], B['Az'], C['Az'], P['Pz'], eps, A_z)
+
+        v_max = l1 + m1 + n1 + l2 + m2 + n2
+        boys = np.zeros(v_max + 1, dtype=np.float64)
+        c_lib.boys_recurrence(v_max, gamma*pc2, boys)
 
         K = 2*np.pi*np.exp(-alpha*beta*ab2/gamma)/gamma
 
-        value = 0
+        value = 0.0
         for x in range(len(A_x)):
             for y in range(len(A_y)):
                 for z in range(len(A_z)):
                     value += A_x[x]*A_y[y]*A_z[z]*boys[x+y+z]
 
         return -self.geometry.atomic_number[nucleus['symbol']]*K*value
-    
-    def _repulsion(self, eta1, eta2, eta3, eta4, p1, p2, p3, p4):
-        A = eta1['center']
-        B = eta2['center']
-        C = eta3['center']
-        D = eta4['center']
-        ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2
-        cd2 = (C['Ax'] - D['Ax'])**2 + (C['Ay'] - D['Ay'])**2 + (C['Az'] - D['Az'])**2
-
-        alpha1 = p1['exponent']
-        beta1 = p2['exponent']
-        alpha2 = p3['exponent']
-        beta2 = p4['exponent']
-        gamma1 = alpha1 + beta1
-        gamma2 = alpha2 + beta2
-        delta = 1/(4*gamma1) + 1/(4*gamma2)
-
-        P = {
-            'Px' : (alpha1*A['Ax'] + beta1*B['Ax'])/gamma1,
-            'Py' : (alpha1*A['Ay'] + beta1*B['Ay'])/gamma1,
-            'Pz' : (alpha1*A['Az'] + beta1*B['Az'])/gamma1
-        }
-        Q = {
-            'Qx' : (alpha2*C['Ax'] + beta2*D['Ax'])/gamma2,
-            'Qy' : (alpha2*C['Ay'] + beta2*D['Ay'])/gamma2,
-            'Qz' : (alpha2*C['Az'] + beta2*D['Az'])/gamma2
-        }
-        p2 = (P['Px'] - Q['Qx'])**2 + (P['Py'] - Q['Qy'])**2 + (P['Pz'] - Q['Qz'])**2
-
-        B_x = self._B('l', eta1, eta2, eta3, eta4, A['Ax'], B['Ax'], C['Ax'], D['Ax'], P['Px'], Q['Qx'], gamma1, gamma2, delta)
-        B_y = self._B('m', eta1, eta2, eta3, eta4, A['Ay'], B['Ay'], C['Ay'], D['Ay'], P['Py'], Q['Qy'], gamma1, gamma2, delta)
-        B_z = self._B('n', eta1, eta2, eta3, eta4, A['Az'], B['Az'], C['Az'], D['Az'], P['Pz'], Q['Qz'], gamma1, gamma2, delta)
-
-        v_max = eta1['l'] + eta1['m'] + eta1['n'] + eta2['l'] + eta2['m'] + eta2['n'] + eta3['l'] + eta3['m'] + eta3['n'] + eta4['l'] + eta4['m'] + eta4['n']
-
-        boys = self._Boys_recurrence(v_max, p2/(4*delta))
-
-        omega = 2*np.pi**2*np.sqrt(np.pi/(gamma1 + gamma2))*np.exp(-(alpha1*beta1*ab2/gamma1 + alpha2*beta2*cd2/gamma2))/(gamma1*gamma2)
-
-        value = 0
-        for x in range(len(B_x)):
-            for y in range(len(B_y)):
-                for z in range(len(B_z)):
-                    value += B_x[x]*B_y[y]*B_z[z]*boys[x+y+z]
-
-        return omega*value
-
-    def _B(self, lmn, eta1, eta2, eta3, eta4, A, B, C, D, P, Q, gamma1, gamma2, delta):
-        
-        array = np.zeros(eta1[f'{lmn}'] + eta2[f'{lmn}'] + eta3[f'{lmn}'] + eta4[f'{lmn}'] + 1)
-
-        for index1 in range(0, eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1):
-            for index2 in range(0, index1//2 + 1):
-                for index3 in range(0, (index1 + eta3[f'{lmn}'] + eta4[f'{lmn}'] - 2*index2)//2 + 1):
-                    for index4 in range(0, eta3[f'{lmn}'] + eta4[f'{lmn}'] + 1):
-                        for index5 in range(0, index4//2 + 1):
-                            if index3 > (index1 + index4 - 2*(index2 + index5))//2:
-                                continue
-                            array[index1 + index4 - 2*(index2 + index5) - index3] += (-1)**(index4 + index3)*self._theta(index1, eta1[f'{lmn}'], eta2[f'{lmn}'], P - A, P - B, index2, gamma1)*self._theta(index4, eta3[f'{lmn}'], eta4[f'{lmn}'], Q - C, Q - D, index5, gamma2)*(2)**(2*(index2+index5-(index1 + index4)))*(delta)**(2*(index2+index5)+index3-(index1+index4))*factorial(index1 + index4 - 2*(index2 + index5))*(Q - P)**(index1 + index4 - 2*(index3 + index2 + index5))/(factorial(index3)*factorial(index1 + index4 - 2*(index3 + index2 + index5)))
-                            
-        return array
-
-    def _theta(self, j, l, m, a, b, r, gamma):
-        value = self._f_j(l, m, a, b, j)*factorial(j)*gamma**(r-j)/(factorial(r)*factorial(j - 2*r))
-
-        return value
-    
-    def _A(self, lmn, eta1, eta2, A, B, C, P, eps):
-        
-        array = np.zeros(eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1)
-
-        for index1 in range(0, eta1[f'{lmn}'] + eta2[f'{lmn}'] + 1):
-            for index2 in range(0, index1//2 + 1):
-                for index3 in range(0, (index1 - 2*index2)//2 + 1):
-                    array[index1 - 2*index2 - index3] += (-1)**(index1 + index3)*self._f_j(eta1[f'{lmn}'], eta2[f'{lmn}'], P - A, P - B, index1)*factorial(index1)*(P - C)**(index1 - 2*(index2 + index3))*eps**(index2 + index3)/(factorial(index2)*factorial(index3)*factorial(index1 - 2*(index2 + index3)))
-
-        return array
-    
-    
-    def _Boys_recurrence(self, n, x):
-        exp = np.exp(-x)
-
-        if x < 1e-15:
-            f_max = 1/(2*n+1)
-        else:
-            f_max = sp.gamma(n + 0.5) * sp.gammainc(n + 0.5, x) / (2 * x**(n + 0.5))
-
-        array = np.zeros(n + 1)
-        array[n] = f_max
-
-        for i in range(n, 0, -1):
-            array[i-1] = (2*x*array[i] + exp)/(2*i - 1)
-
-        return array
-    
-    def _N(self, alpha, l, m ,n):
-        N = ((((4*alpha)**(l + m + n) / (factorial2(2*l - 1)*factorial2(2*m - 1)*factorial2(2*n - 1)))**(1/2)) * (2*alpha/np.pi)**(3/4))
-
-        return N
-    
-    def _S(self, l, m, Pa, Pb, g):
-        value = 0.0
-        
-        for j in range((l + m)//2 + 1):
-            value += self._f_j(l, m, Pa, Pb, 2*j) * factorial2(2*j - 1) / (2*g)**j
-
-        value *= np.sqrt(np.pi/g)
-
-        return value      
-
-    def _f_j(self, l, m, a, b, j):
-        """
-        Calculates the coefficient of x^j in the expansion of (x + a)^l * (x + b)^m
-        """
-        value = 0.0
-
-        for k in range(max(0, j - m), min(j, l) + 1):
-            value += comb(l, k) * comb(m, j - k) * a**(l - k) * b**(m + k - j)
-
-        return value
 
 class Basis:
     """
@@ -661,7 +622,9 @@ class Scf:
         'N':  {'s': -26.0 * eV2Eh,  'p': -13.4 * eV2Eh},
         'O':  {'s': -32.3 * eV2Eh,  'p': -14.8 * eV2Eh},
         'F': {'s': -40.0 * eV2Eh, 'p': -18.1 * eV2Eh},
-        'Ne': {'s': -43.2 * eV2Eh,  'p': -20.0 * eV2Eh}
+        'Ne': {'s': -43.2 * eV2Eh,  'p': -20.0 * eV2Eh},
+        'Br': {'s': -22.07 * eV2Eh,  'p': -13.1 * eV2Eh},
+        'Kr': {'s': 0.0,  'p': 0.0}
     }
 
     def __init__(self, geometry):
@@ -674,9 +637,9 @@ class Scf:
         self.T = Matrix(self.geometry, 1)
         self.V = Matrix(self.geometry, 2)
         self.Rep = Matrix(self.geometry, 3)
-        self.H_huckel = self._extended_huckel()
+        # self.H_huckel = self._extended_huckel()
         self.H_core = self.T.matrix + self.V.matrix
-        self.D = self._density(self.H_huckel)
+        self.D = self._density(self.H_core)
         self.J, self.K = self._coulomb_and_exchange(self.D)
         self.F = self.H_core + 2*self.J - self.K 
 
@@ -806,7 +769,8 @@ class Scf:
         dimension = len(self.basis)
         K = 1.75
         H_eht = np.zeros((dimension, dimension))
-
+       
+        
         for i in range(dimension):
             symbol = self.basis[i]['symbol']
             l, m, n = self.basis[i]['l'], self.basis[i]['m'], self.basis[i]['n']
@@ -837,38 +801,9 @@ class Scf:
         return D
     
     def _coulomb_and_exchange(self, D):
-        dimension = len(self.basis)
-        Rep = self.Rep.matrix
-        J = np.zeros((dimension, dimension))
-        K = np.zeros((dimension, dimension))
-
-        for p in range(dimension):
-            for q in range(dimension):
-                p_j = min(p,q)
-                q_j = max(p,q)
-                for r in range(dimension):
-                    for s in range(dimension):
-                        r_j = min(r,s)
-                        s_j = max(r,s)
-
-                        p_k = min(p,s)
-                        s_k = max(p,s)
-                        r_k = min(r,q)
-                        q_k = max(r,q)
-
-                        if (r_j, s_j) >= (p_j, q_j):
-                            val_J = Rep[p_j, q_j, r_j, s_j]
-                        else:
-                            val_J = Rep[r_j, s_j, p_j, q_j]
-
-                        if (r_k, q_k) >= (p_k, s_k):
-                            val_K = Rep[p_k, s_k, r_k, q_k]
-                        else:
-                            val_K = Rep[r_k, q_k, p_k, s_k]
-
-                        J[p, q] += val_J * D[r, s]
-                        K[p, q] += val_K * D[r, s]
-                        
+        J = np.einsum('pqrs,rs->pq', self.Rep.matrix, D, optimize=True)
+        K = np.einsum('psrq,rs->pq', self.Rep.matrix, D, optimize=True)
+        
         return J, K
         
     def _orbital_type(self, l, m, n):
