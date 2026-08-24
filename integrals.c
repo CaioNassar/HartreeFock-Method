@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#define IDX4D(a, b, c, d, dim) ((a)*(dim)*(dim)*(dim) + (b)*(dim)*(dim) + (c)*(dim) + (d)) 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -260,4 +261,50 @@ double repulsion_integral4(
         }
     }
     return total_value;
+}
+
+double repulsion_matrix(
+    int dim, double* centers, int* lmns, int* lens,         
+    int* offsets, double* exps, double* coefs, 
+    double* normalize, double* matrix  
+) {
+    for(int i = 0; i < dim; i++) {
+        for(int j = i; j < dim; j++) {
+            for(int k = 0; k < dim; k++) {
+                for(int l = k; l < dim; l++) {
+                    if (k < i || (k == i && l < j)){
+                        continue;
+                    }
+
+                    int lmn12[12] = {
+                        lmns[i*3], lmns[i*3+1], lmns[i*3+2],
+                        lmns[j*3], lmns[j*3+1], lmns[j*3+2],
+                        lmns[k*3], lmns[k*3+1], lmns[k*3+2],
+                        lmns[l*3], lmns[l*3+1], lmns[l*3+2]
+                    };
+
+                    double integral = repulsion_integral4(
+                        lmn12,
+                        &centers[i*3], &centers[j*3], &centers[k*3], &centers[l*3],
+                        lens[i], lens[j], lens[k], lens[l],
+                        &exps[offsets[i]], &coefs[offsets[i]],
+                        &exps[offsets[j]], &coefs[offsets[j]],
+                        &exps[offsets[k]], &coefs[offsets[k]],
+                        &exps[offsets[l]], &coefs[offsets[l]]
+                    );
+
+                    double value = integral * normalize[i] * normalize[j] * normalize[k] * normalize[l];
+
+                    matrix[IDX4D(i, j, k, l, dim)] = value;
+                    matrix[IDX4D(i, j, l, k, dim)] = value;
+                    matrix[IDX4D(j, i, k, l, dim)] = value;
+                    matrix[IDX4D(j, i, l, k, dim)] = value;
+                    matrix[IDX4D(k, l, i, j, dim)] = value;
+                    matrix[IDX4D(k, l, j, i, dim)] = value;
+                    matrix[IDX4D(l, k, i, j, dim)] = value;
+                    matrix[IDX4D(l, k, j, i, dim)] = value;
+                }
+            }
+        }
+    }
 }

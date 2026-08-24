@@ -7,16 +7,28 @@ from contextlib import redirect_stdout
 import io
 from line_profiler import LineProfiler
 import os
-
+ 
 basis_file = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\basis_ex.txt'
 xyz_path = 'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz'
 
 molecules = [arquivo.replace('.txt', '') for arquivo in os.listdir(xyz_path) if arquivo.endswith('.txt')]
+# molecules = ['co2']
 
+# profiler = LineProfiler()
+
+# profiler.add_function(Scf.__init__)
+# profiler.add_function(Scf.scf)
+# profiler.add_function(Matrix.__init__)
+# profiler.add_function(Matrix._integral)
+# profiler.add_function(Matrix._overlap)
+# profiler.add_function(Matrix._kinetic_energy)
+# profiler.add_function(Matrix._nuclear_attraction)
+
+# profiler.enable()
 
 for geo in molecules:
-    if geo == 'br2':
-        continue
+    # if geo == 'br2':
+    #     continue
 
     if geo == 'h2o6+':
         molecule_file = f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\xyz\\h2o.txt'
@@ -115,3 +127,6 @@ for geo in molecules:
 
     # fig.savefig(f'C:\\Users\\Gerenciador\\Documents\\programming\\HartreeFock-Method\\scf_core_{geo}.png', dpi=200)
     # plt.close(fig)
+
+# profiler.disable()
+# profiler.print_stats()

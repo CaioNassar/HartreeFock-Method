@@ -6,6 +6,8 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 import ctypes
 import os
+from numba import njit
+
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
 lib_path = os.path.join(base_dir, "integrals.dll")
@@ -58,6 +60,19 @@ c_lib.repulsion_integral4.argtypes = [
     np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS')   # coef4
 ]
 c_lib.repulsion_integral4.restype = ctypes.c_double 
+
+c_lib.repulsion_matrix.argtypes = [
+    ctypes.c_int,                                                           # dim
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=2, flags='C_CONTIGUOUS'),  # centers
+    np.ctypeslib.ndpointer(dtype=np.int32, ndim=2, flags='C_CONTIGUOUS'),  # lmns
+    np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # lens
+    np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),  # offsets 
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # exps
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # coefs
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # normalize
+    np.ctypeslib.ndpointer(dtype=np.float64, ndim=4, flags='C_CONTIGUOUS')  # matrix
+]
+c_lib.repulsion_matrix.restype = None
 
 c_lib.normalize_N.argtypes = [
     ctypes.c_double, ctypes.c_int, ctypes.c_int, ctypes.c_int
@@ -251,6 +266,7 @@ class Geometry:
 
         return curve
 
+
 class Matrix:
     Quantum_numbers = {
     # l = 0
@@ -334,23 +350,36 @@ class Matrix:
         if type_matrix == 3:
             self.matrix = np.zeros((dimension, dimension, dimension, dimension))
 
-            for i in range(dimension):
-                for j in range(i, dimension):
-                    for k in range(dimension):
-                        for l in range(k, dimension):
-                            if (k, l) >= (i, j):
-                                integral  = self._integral4(basis_functions[i], basis_functions[j], basis_functions[k], basis_functions[l])
+            centers = np.zeros((dimension, 3), dtype=np.float64)
+            lmns = np.zeros((dimension, 3), dtype=np.int32)
+            lens = np.zeros(dimension, dtype=np.int32)
+            offsets = np.zeros(dimension, dtype=np.int32)
 
-                                value = integral * normalize[i] * normalize[j] * normalize[k] * normalize[l]
-                                self.matrix[i, j, k, l] = value
-                                self.matrix[i, j, l, k] = value
-                                self.matrix[j, i, k, l] = value
-                                self.matrix[j, i, l, k] = value
-                                self.matrix[k, l, i, j] = value
-                                self.matrix[k, l, j, i] = value
-                                self.matrix[l, k, i, j] = value
-                                self.matrix[l, k, j, i] = value
-                             
+            flat_exps = []
+            flat_coefs = []
+            current_offset = 0
+
+            for i, bf in enumerate(basis_functions):
+                centers[i] = [bf['center']['Ax'], bf['center']['Ay'], bf['center']['Az']]
+                lmns[i] = [bf['l'], bf['m'], bf['n']]
+                
+                e_arr = [p['exponent'] for p in bf['primitives']]
+                c_arr = [p['coefficient'] for p in bf['primitives']]
+                
+                flat_exps.extend(e_arr)
+                flat_coefs.extend(c_arr)
+                
+                lens[i] = len(e_arr)
+                offsets[i] = current_offset
+                current_offset += len(e_arr)
+
+            exponents = np.array(flat_exps, dtype=np.float64)
+            coefficients = np.array(flat_coefs, dtype=np.float64)
+
+            c_lib.repulsion_matrix(
+                dimension, centers, lmns, lens, offsets, 
+                exponents, coefficients, normalize, self.matrix
+            )
 
         else:
             self.matrix = np.zeros((dimension, dimension))
@@ -928,9 +957,3 @@ class ResultD_Cartesian:
         
     def yz(self):
         return self.value * (self.dy * self.dz)
-
-def factorial2(n):
-    value = 1
-    for i in range (n, 0, -2):
-        value *= i
-    return value
