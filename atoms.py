@@ -1,19 +1,48 @@
+"""
+atoms.py -- closed-shell (RHF) Hartree-Fock with Cartesian Gaussian basis sets.
+
+Overview of the pipeline (see README.md for user-level description):
+
+    Geometry  : reads the xyz file and the Molcas-format basis set file.
+    Matrix    : builds one of S (overlap), T (kinetic), V (nuclear attraction)
+                or the two-electron repulsion tensor (mu nu | lambda sigma).
+                The O(N^4) repulsion tensor is computed in C (integrals.dll).
+    Scf       : builds the initial density guess (core Hamiltonian or extended
+                Huckel), then iterates the Roothaan equations with Pulay's DIIS.
+    Basis,
+    Result*   : helpers that EVALUATE contracted GTOs at a point in space.
+                They are not used by the SCF itself.
+
+Units: coordinates are read in Angstrom and converted to Bohr; energies are in
+Hartree (Eh).
+"""
+
 import numpy as np
-from math import comb, factorial
-import scipy.special as sp
+import ctypes
+import os
+import sys
 from ntpath import basename, splitext
 from tempfile import TemporaryDirectory
 from pathlib import Path
-import ctypes
-import os
-from numba import njit
 
 
+
+# ---------------------------------------------------------------------------
+# Loading the C library with the integral routines (integrals.c)
+# ---------------------------------------------------------------------------
+# The library must sit next to this file. The name is hard-coded: build it as
+# "integrals.dll" (ctypes does not care about the extension on Linux/macOS).
 base_dir = os.path.dirname(os.path.abspath(__file__))
-lib_path = os.path.join(base_dir, "integrals.dll")
+_ext = {'win32': '.dll', 'darwin': '.dylib'}.get(sys.platform, '.so')
+lib_path = os.path.join(base_dir, "integrals" + _ext)
 
 c_lib = ctypes.CDLL(lib_path)
 
+# ctypes needs the exact C signature of every function it calls. Pointers to
+# numpy arrays are declared with ndpointer so that dtype / dimensionality /
+# C-contiguity are checked on every call.
+
+# void calculate_B(l1..l4, A, B, C, D, P, Q, gamma1, gamma2, delta, out)
 c_lib.calculate_B.argtypes = [
     ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,     
     ctypes.c_double, ctypes.c_double, ctypes.c_double, ctypes.c_double, 
@@ -23,6 +52,7 @@ c_lib.calculate_B.argtypes = [
 ]
 c_lib.calculate_B.restype = None
 
+# void calculate_A(l1, l2, A, B, C, P, eps, out)   (nuclear attraction)
 c_lib.calculate_A.argtypes = [
     ctypes.c_int, ctypes.c_int,                                 
     ctypes.c_double, ctypes.c_double, ctypes.c_double,          
@@ -31,18 +61,22 @@ c_lib.calculate_A.argtypes = [
 ]
 c_lib.calculate_A.restype = None
 
+# void boys_recurrence(n, x, out)   fills out[0..n] with F_0(x)..F_n(x)
 c_lib.boys_recurrence.argtypes = [
     ctypes.c_int, ctypes.c_double,
     np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS')
 ]
 c_lib.boys_recurrence.restype = None
 
+# double S_integral(l, m, Pa, Pb, gamma)   1-D overlap integral
 c_lib.S_integral.argtypes = [
     ctypes.c_int, ctypes.c_int,                  
     ctypes.c_double, ctypes.c_double, ctypes.c_double 
 ]
 c_lib.S_integral.restype = ctypes.c_double
 
+# double repulsion_integral4(...)   one contracted (mu nu | lambda sigma);
+# used by Matrix._integral4 (a single-integral helper, handy for testing).
 c_lib.repulsion_integral4.argtypes = [
     np.ctypeslib.ndpointer(dtype=np.int32, ndim=1, flags='C_CONTIGUOUS'),    # lmn
     np.ctypeslib.ndpointer(dtype=np.float64, ndim=1, flags='C_CONTIGUOUS'),  # A
@@ -61,6 +95,7 @@ c_lib.repulsion_integral4.argtypes = [
 ]
 c_lib.repulsion_integral4.restype = ctypes.c_double 
 
+# void repulsion_matrix(...)   fills the whole dim^4 repulsion tensor in C
 c_lib.repulsion_matrix.argtypes = [
     ctypes.c_int,                                                           # dim
     np.ctypeslib.ndpointer(dtype=np.float64, ndim=2, flags='C_CONTIGUOUS'),  # centers
@@ -74,16 +109,26 @@ c_lib.repulsion_matrix.argtypes = [
 ]
 c_lib.repulsion_matrix.restype = None
 
+# double normalize_N(alpha, l, m, n)   normalisation of one primitive GTO
 c_lib.normalize_N.argtypes = [
     ctypes.c_double, ctypes.c_int, ctypes.c_int, ctypes.c_int
 ]
 c_lib.normalize_N.restype = ctypes.c_double
+
 
 class Geometry:
     """
     The class Geometry stores the 3D coordinates, atomic composition and basis set of the atoms of the molecule.
 
     An instance of this class represents a molecule, reading its geometry.
+
+    Attributes (filled by __init__):
+        atoms (dict): one entry per chemical element present, ordered from the
+            highest to the lowest atomic number:
+            {symbol: {'basis': {orbital: data}, 'instance': [atom_coord, ...]}}.
+            This order also defines the order of the basis functions in all matrices.
+        atom_list (list): every atom in the order of the xyz file.
+        n_electrons (int): sum of the atomic numbers minus the molecular charge.
     """
     atomic_number = {
         'H': 1, 'He': 2, 'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'Ne': 10,
@@ -101,15 +146,15 @@ class Geometry:
         # This class attribute maps chemical symbols to their respective atomic numbers.
     }
 
-    
-
     def __init__(self, path_coord, path_basis, charge=0):
         """
         Initializes the Geometry object.
 
         Args:
-            path_coord (str): The file path to the atomic coordinates file.
-            path_basis (str): The file path to the basis set.
+            path_coord (str): The file path to the atomic coordinates file (xyz, Angstrom).
+            path_basis (str): The file path to the basis set (Molcas format).
+            charge (int): Net molecular charge (+1 removes one electron). The
+                resulting number of electrons must be even (closed shell).
         """
         self.path_coord = path_coord
         self.path_basis = path_basis
@@ -118,8 +163,8 @@ class Geometry:
         self.n_atoms = 0 # Number of atoms in the element.
         self.n_electrons = 0
         self.charge = charge
-        self.cartesian = 0
-        self.ang2bohr = 1.88972612590778
+        self.cartesian = 0          # set to 1 if the basis file contains the word "cartesian"
+        self.ang2bohr = 1.88972612590778    # 1 Angstrom in Bohr
 
         # Reads the file of the atomic coordinates, sets self.atoms.
         first_file = self._read_coordinates()
@@ -143,6 +188,10 @@ class Geometry:
     def _read_coordinates(self):
         """
         Reads the file and stores the center coordinates of each atom.
+
+        Expected xyz layout: line 1 = number of atoms, line 2 = comment
+        (ignored), then one "Symbol x y z" line per atom, in Angstrom.
+        Coordinates are converted to Bohr when stored.
 
         Return:
             bool: True if the file was read successfully, False otherwise.
@@ -174,6 +223,8 @@ class Geometry:
                     else:
                         atomic_dict[symbol]['instance'].append(atom_coord)
 
+                # Heaviest element first. This fixes the ordering of the basis
+                # functions (and therefore of every matrix) in the SCF.
                 ordered_atoms = sorted(atomic_dict.keys(), key=lambda item: self.atomic_number.get(item), reverse=True)
                 for element in ordered_atoms:
                     self.atoms[element] = atomic_dict[element]
@@ -189,6 +240,19 @@ class Geometry:
         """
         Read the file and stores info for each different element in the molecule.
 
+        Parsing rules (Molcas library layout):
+          * a line containing both "/" and "inline" opens the block of an
+            element; its FIRST token must be the chemical symbol (e.g. "H / inline").
+            Blocks of elements that are not in the molecule are skipped;
+          * a line containing "-type" (e.g. "* S-type functions") starts a
+            shell; the orbital label must be its 2nd token ("S-type");
+          * the next line holds "<n_primitives> <n_contracted_functions>";
+          * then n_primitives lines with one exponent each;
+          * then n_primitives lines with n_contracted coefficients each
+            (row = primitive, column = contracted function);
+          * any line containing the word "cartesian" sets self.cartesian = 1
+            (only used by Basis.d to choose Cartesian vs spherical d evaluation).
+
         Return:
             bool: True if the file was read successfully, False otherwise.
         """
@@ -199,7 +263,7 @@ class Geometry:
                 lines_iterator = iter(file)
                 for line in lines_iterator:
                     line = line.strip()
-                    if 'cartesian' in line:
+                    if 'cartesian' in line.lower():
                         self.cartesian = 1
                     if '/' in line and 'inline' in line:
                         # Search the flag(/inline) to read the basis set of an atom.
@@ -232,11 +296,10 @@ class Geometry:
                             'number_of_primitives': num_primitives,
                             'contracted_functions': num_contracted,
                             'exponents': exp,
-                            'coefficients': coef,
+                            'coefficients': coef,   # kept as strings; converted to float when used
                         } # Dictionary that stores the parsed data.
             
-
-            
+            # Every element of the molecule must have found its basis in the file.
             for element in list(self.atoms.keys()):
                 if not self.atoms[element]['basis']:
                     raise ValueError(f'Configuration ERROR: The element "{element}" does NOT have the basis included in the file.')
@@ -248,26 +311,59 @@ class Geometry:
             print(f'Something went wrong when trying to read the file: {e}')
             return False
             
-    def potential_energy_curve(self, distances):
+    def potential_energy_curve(self, distances, initial_guess='core'):
+        """
+        Scans the internuclear distance of a diatomic molecule and runs a full
+        SCF at every point.
+
+        Args:
+            distances (iterable of float): internuclear distances in Angstrom.
+            initial_guess (str): 'core' or 'huckel' -- see Scf.
+
+        Return:
+            list of (distance, total_energy) tuples, energy in Eh.
+        """
         if self.n_atoms != 2:
             raise ValueError('This function only works with 2 atoms')
 
         symbols = [atom['symbol'] for atom in self.atom_list]
         curve = []
         for distance in distances:
+            # Place the two atoms symmetrically on the z axis, `distance` apart.
             z = distance/2
             xyz = f"2\n\n{symbols[0]} 0.0 0.0 {-z}\n{symbols[1]} 0.0 0.0 {z}\n"
             with TemporaryDirectory() as tmp_dir:
                 tmp_path = Path(tmp_dir) / 'geometry.txt'
                 tmp_path.write_text(xyz)
                 mol = Geometry(str(tmp_path), self.path_basis, self.charge)
-                one_elec, two_elec, e_nuc, _ = Scf(mol).scf()
+                # scf() returns [one-electron, two-electron, nuclear, kinetic] energies.
+                # (scf() raises RuntimeError if it does not converge, which aborts the scan.)
+                one_elec, two_elec, e_nuc, _ = Scf(mol, initial_guess=initial_guess).scf()
             curve.append((distance, one_elec + two_elec + e_nuc))
 
         return curve
 
-
 class Matrix:
+    """
+    One integral matrix over the contracted Cartesian Gaussian basis.
+
+    Construction (one instance per matrix type) does the following:
+      1. lists the basis functions of the whole molecule (self.basis_functions);
+      2. computes the normalisation of every contracted function;
+      3. fills self.matrix with S, T or V (N x N), or with the two-electron
+         repulsion tensor (mu nu | lambda sigma) (N x N x N x N, via C).
+
+    Ordering of the basis functions: element by element (heaviest first), atom
+    by atom, shell by shell in the order of the basis file, then contracted
+    function, then Cartesian component (see Quantum_numbers).
+    """
+
+    # Cartesian components (l, m, n) -- the exponents of (x-Ax), (y-Ay), (z-Az) --
+    # of each shell: a "d" shell gives 6 functions, an "f" shell 10. S, T, V and
+    # the repulsion tensor are always built from these Cartesian components.
+    # The Cartesian -> real-spherical combination of the d shell (5 functions)
+    # lives in ResultD_Spherical, which Basis.d uses to evaluate orbitals in
+    # space; it is not applied to the integral matrices built here.
     Quantum_numbers = {
     # l = 0
     's': [(0, 0, 0)],  # s
@@ -309,6 +405,7 @@ class Matrix:
         basis_functions = []
         molecule = []
 
+        # Flat list of atoms (element, centre, element's basis), in basis-function order.
         for symbol, data in self.geometry.atoms.items():
             for center in data['instance']:
                 molecule.append({
@@ -317,11 +414,12 @@ class Matrix:
                     'basis': data['basis']
                 })
                 
+        # Expand every shell of every atom into individual contracted Cartesian functions.
         for atom in molecule:
             for orbital, data in atom['basis'].items():
                 quant_numbers = self.Quantum_numbers.get(orbital, [])
-                for k in range(data['contracted_functions']):
-                    for (l, m, n) in quant_numbers:
+                for k in range(data['contracted_functions']):       # k-th contraction of the shell
+                    for (l, m, n) in quant_numbers:                 # each Cartesian component
                         function = {
                             'symbol': atom['symbol'],
                             'center': atom['center'],
@@ -334,6 +432,7 @@ class Matrix:
                             coef = float(data['coefficients'][i][k]) 
                             if coef != 0.0: 
                                 exponent = data['exponents'][i]
+                                # Store contraction coefficient * normalisation of the primitive.
                                 function['primitives'].append({
                                     'exponent': exponent,
                                     'coefficient': coef * c_lib.normalize_N(exponent, l, m, n)
@@ -343,13 +442,19 @@ class Matrix:
         self.basis_functions = basis_functions
         dimension = len(basis_functions)
 
+        # Normalisation of each CONTRACTED function: 1/sqrt(<chi|chi>).
+        # It multiplies every integral that involves the function.
         normalize = np.zeros(dimension)
         for i in range(dimension):
             normalize[i] = 1/np.sqrt(self._integral(basis_functions[i], basis_functions[i], 0))
         
         if type_matrix == 3:
+            # --- Two-electron repulsion tensor, computed in C -----------------
             self.matrix = np.zeros((dimension, dimension, dimension, dimension))
 
+            # Flatten the basis into plain arrays that can be handed to C:
+            # centres, (l,m,n), number of primitives, offset of each function's
+            # primitives, and the concatenated exponents / coefficients.
             centers = np.zeros((dimension, 3), dtype=np.float64)
             lmns = np.zeros((dimension, 3), dtype=np.int32)
             lens = np.zeros(dimension, dtype=np.int32)
@@ -376,12 +481,14 @@ class Matrix:
             exponents = np.array(flat_exps, dtype=np.float64)
             coefficients = np.array(flat_coefs, dtype=np.float64)
 
+            # Fills self.matrix in place (it is dimension^4 doubles: memory grows as N^4).
             c_lib.repulsion_matrix(
                 dimension, centers, lmns, lens, offsets, 
                 exponents, coefficients, normalize, self.matrix
             )
 
         else:
+            # --- One-electron matrices (S, T, V): symmetric, so only i <= j is computed.
             self.matrix = np.zeros((dimension, dimension))
 
             for i in range(dimension):
@@ -390,6 +497,7 @@ class Matrix:
                             integral = self._integral(basis_functions[i], basis_functions[j], type_matrix)
 
                         elif type_matrix == 2:
+                            # Nuclear attraction: sum over every nucleus of the molecule.
                             integral = 0
                             for atom in molecule:
                                 integral += self._integral(basis_functions[i], basis_functions[j], type_matrix, atom)
@@ -400,6 +508,11 @@ class Matrix:
             
 
     def _integral4(self, eta1, eta2, eta3, eta4):
+        """
+        Single contracted repulsion integral (eta1 eta2 | eta3 eta4) through C,
+        WITHOUT the contracted-function normalisation factors. Not used by the
+        SCF (Matrix fills the whole tensor at once); handy for testing.
+        """
         A = np.array([eta1['center']['Ax'], eta1['center']['Ay'], eta1['center']['Az']], dtype=np.float64)
         B = np.array([eta2['center']['Ax'], eta2['center']['Ay'], eta2['center']['Az']], dtype=np.float64)
         C = np.array([eta3['center']['Ax'], eta3['center']['Ay'], eta3['center']['Az']], dtype=np.float64)
@@ -430,10 +543,21 @@ class Matrix:
         return value
 
     def _integral(self, eta1, eta2, type_matrix = 0, nucleus = 0):
+        """
+        Contracted one-electron integral between two basis functions: the sum
+        over all pairs of primitives of  c_a * c_b * (primitive integral).
+
+        Args:
+            eta1, eta2: basis-function dicts (see Matrix.__init__).
+            type_matrix: 0 overlap, 1 kinetic, 2 nuclear attraction.
+            nucleus: the attracting nucleus (only for type_matrix == 2).
+        The result is NOT multiplied by the contracted-function normalisation.
+        """
         value = 0.0
         A = eta1['center']
         B = eta2['center']
 
+        # Squared distance between the two centres.
         ab2 = (A['Ax'] - B['Ax'])**2 + (A['Ay'] - B['Ay'])**2 + (A['Az'] - B['Az'])**2 
         
         for primitive1 in eta1['primitives']:
@@ -457,6 +581,10 @@ class Matrix:
         return value
     
     def _overlap(self, eta1, eta2, p1, p2, ab2):
+        """
+        Overlap of two primitives: exp(-ab/g * |AB|^2) * Sx * Sy * Sz, where each
+        1-D factor comes from S_integral (C) around the product centre P.
+        """
         A = eta1['center']
         B = eta2['center']
 
@@ -464,6 +592,7 @@ class Matrix:
         beta = p2['exponent']
         gamma = alpha + beta
 
+        # Gaussian product centre.
         Px = (alpha*A['Ax'] + beta*B['Ax'])/gamma
         Py = (alpha*A['Ay'] + beta*B['Ay'])/gamma
         Pz = (alpha*A['Az'] + beta*B['Az'])/gamma
@@ -477,17 +606,30 @@ class Matrix:
         return integral
     
     def _kinetic_energy(self, eta1, eta2, p1, p2, ab2):
+        """
+        Kinetic-energy integral <a| -1/2 nabla^2 |b> of two primitives, written
+        as a combination of overlaps with shifted angular momenta on `a`
+        (alpha = exponent of a; l_c is the angular momentum on axis c):
+
+            T = alpha (2(l+m+n) + 3) S(a, b)
+                - 2 alpha^2  sum_c S(a + 2 e_c, b)
+                - 1/2        sum_c l_c (l_c - 1) S(a - 2 e_c, b)
+        """
         alpha = p1['exponent']
         value = alpha*(2*(eta1['l'] + eta1['m'] + eta1['n']) + 3)*self._overlap(eta1, eta2, p1, p2, ab2)
         coord = ['l', 'm', 'n']
         
+        # Work on a copy so that the caller's function dict is not modified.
         eta1_c = eta1.copy()
+
+        # Second term: raise the angular momentum by 2 along each axis in turn.
         for c in coord:
             eta1_c[c] += 2
             value += -2*(alpha**2)*self._overlap(eta1_c, eta2, p1, p2, ab2)
             eta1_c[c] -= 2
 
-        
+        # Third term: lower it by 2 (only possible when l_c >= 2; otherwise the
+        # factor l_c (l_c - 1) is zero). With l' = l_c - 2, (l'+2)(l'+1) = l_c (l_c - 1).
         for c in coord:
             if eta1_c[c] >= 2:
                 eta1_c[c] -= 2
@@ -497,6 +639,15 @@ class Matrix:
         return value
         
     def _nuclear_attraction(self, eta1, eta2, p1, p2, nucleus, ab2):
+        """
+        Attraction of two primitives to ONE nucleus (sum over nuclei is done in
+        Matrix.__init__):
+
+            V = -Z * (2 pi / gamma) * exp(-ab/g |AB|^2)
+                * sum_{ux,uy,uz} A_x[ux] A_y[uy] A_z[uz] F_{ux+uy+uz}(gamma |P-C|^2)
+
+        A_x, A_y, A_z come from calculate_A (C) and F_n is the Boys function.
+        """
         A = eta1['center']
         B = eta2['center']
         C = nucleus['center']
@@ -506,14 +657,17 @@ class Matrix:
         gamma = alpha + beta
         eps = 1/(4*gamma)
 
+        # Gaussian product centre.
         P = {
             'Px' : (alpha*A['Ax'] + beta*B['Ax'])/gamma,
             'Py' : (alpha*A['Ay'] + beta*B['Ay'])/gamma,
             'Pz' : (alpha*A['Az'] + beta*B['Az'])/gamma
         }
         
+        # Squared distance from P to the nucleus.
         pc2 = (P['Px'] - C['Ax'])**2 + (P['Py'] - C['Ay'])**2 + (P['Pz'] - C['Az'])**2
 
+        # Per-axis A coefficients (arrays must start at zero: C accumulates into them).
         l1, l2 = eta1['l'], eta2['l']
         A_x = np.zeros(l1 + l2 + 1, dtype=np.float64)
         c_lib.calculate_A(l1, l2, A['Ax'], B['Ax'], C['Ax'], P['Px'], eps, A_x)
@@ -526,6 +680,7 @@ class Matrix:
         A_z = np.zeros(n1 + n2 + 1, dtype=np.float64)
         c_lib.calculate_A(n1, n2, A['Az'], B['Az'], C['Az'], P['Pz'], eps, A_z)
 
+        # Boys functions F_0 .. F_vmax, with vmax = total angular momentum.
         v_max = l1 + m1 + n1 + l2 + m2 + n2
         boys = np.zeros(v_max + 1, dtype=np.float64)
         c_lib.boys_recurrence(v_max, gamma*pc2, boys)
@@ -545,6 +700,10 @@ class Basis:
     The class Basis calculates Cartesians-Gaussians-Type Orbitals (GTOs).
 
     An instance of this class represents a single atom of the molecule.
+
+    It EVALUATES the contracted radial part (and the angular part for p/d) at
+    a given point in space. It is stored in atom['GTO'] by Geometry but is not
+    used by the SCF, which works directly with the integral matrices.
     """
 
     def __init__(self, center, basis_data, cartesian_basis):
@@ -554,6 +713,8 @@ class Basis:
         Args:
             center (dict): center coordinates of the atom.
             basis_data (dict): info about the basis set of the element.
+            cartesian_basis (int): 1 to evaluate d shells as 6 Cartesian
+                functions, 0 as 5 spherical ones.
         """
 
         self.Ax = center['Ax']
@@ -582,7 +743,7 @@ class Basis:
                 coef.append(c[sel])
         else:
             raise ValueError(
-                f'This selection does not exist, choose from 0 to {data['contracted_functions'] - 1}')
+                f"This selection does not exist, choose from 0 to {data['contracted_functions'] - 1}")
             # Raises if selected option is out of bounds.
         
         contracted_value = 0.0
@@ -623,24 +784,59 @@ class Basis:
         return ResultP(radial, x, y, z, self.Ax, self.Ay, self.Az)
     
     def d(self, x, y, z, sel=0):
-            """
-            Returns the value for d-orbitals.
-            ResultD object calculates for the determined component.
-    
-            Args:
-                x, y, z (float): coordinates of evaluating point.
-                sel (int): selects the contractiion option.
-            """
+        """
+        Returns the value for d-orbitals.
+        ResultD object calculates for the determined component.
 
-            radial = self._calculate(x, y, z, sel, 'd')
+        Args:
+            x, y, z (float): coordinates of evaluating point.
+            sel (int): selects the contractiion option.
+        """
 
-            if self.cartesian:
-                return ResultD_Cartesian(radial, x, y, z, self.Ax, self.Ay, self.Az)
-            
-            return ResultD_Spherical(radial, x, y, z, self.Ax, self.Ay, self.Az)
+        radial = self._calculate(x, y, z, sel, 'd')
+
+        if self.cartesian:
+            return ResultD_Cartesian(radial, x, y, z, self.Ax, self.Ay, self.Az)
+        
+        return ResultD_Spherical(radial, x, y, z, self.Ax, self.Ay, self.Az)
 
 class Scf:
+    """
+    Closed-shell (restricted) Hartree-Fock SCF.
+
+    Roothaan equations  F C = S C eps  with
+        D  = C_occ C_occ^T                     density matrix (one spin)
+        J  = (mu nu | lambda sigma) D          Coulomb matrix
+        K  = (mu sigma | lambda nu) D          exchange matrix
+        F  = H_core + 2J - K                   Fock matrix
+        E  = E_nuc + sum D (H_core + F)        total energy
+
+    The non-orthogonal basis is handled by canonical orthogonalisation
+    (X = U s^-1/2 with eigenvalues s <= 1e-5 discarded). The iteration is
+    accelerated with Pulay's DIIS and stops when the infinity norm of the
+    orbital gradient  G = X^T (F D S - S D F) X  falls below a threshold.
+
+    Initial density guess (argument `initial_guess`):
+        'core'   : diagonalise the core Hamiltonian H_core = T + V
+                   (default; works for any element).
+        'huckel' : diagonalise an extended Huckel Hamiltonian built from the
+                   S matrix and valence-state ionisation potentials (Vsip
+                   below). Only the elements/shells listed in Vsip are supported.
+    The guess can be changed on an existing object with set_initial_guess(),
+    which re-uses the (expensive) integrals.
+    """
     eV2Eh = 1/27.211386245981
+
+    # Accepted spellings of the initial-guess option -> canonical name.
+    GUESS_ALIASES = {
+        'core': 'core', 'hcore': 'core', 'h_core': 'core', 'core_hamiltonian': 'core',
+        'huckel': 'huckel', 'eht': 'huckel', 'extended_huckel': 'huckel',
+    }
+    # Names printed in the SCF summary.
+    GUESS_LABELS = {'core': 'core Hamiltonian', 'huckel': 'extended Huckel'}
+
+    # Diagonal elements of the extended Huckel Hamiltonian: orbital energies
+    # (valence state ionisation potentials, in Eh) per element and shell type.
     Vsip = {
         # Valence state ionization potential, from YAeHMOP
         'H':  {'s': -13.6 * eV2Eh},
@@ -656,27 +852,93 @@ class Scf:
         'Kr': {'s': 0.0,  'p': 0.0}
     }
 
-    def __init__(self, geometry):
+    def __init__(self, geometry, initial_guess='core'):
+        """
+        Computes all integrals and the initial density guess. The SCF itself
+        runs in scf().
+
+        Args:
+            geometry (Geometry): molecule and basis set.
+            initial_guess (str): 'core' (default) or 'huckel'.
+        """
         self.geometry = geometry
         if self.geometry.n_electrons % 2:
             raise ValueError("An even number of electrons is necessary for the closed-shell calculation.")
         
-        self.S = Matrix(self.geometry, 0)
+        # Integrals (the repulsion tensor is the expensive step).
+        self.S = Matrix(self.geometry, 0)       # overlap
         self.basis = self.S.basis_functions
-        self.T = Matrix(self.geometry, 1)
-        self.V = Matrix(self.geometry, 2)
-        self.Rep = Matrix(self.geometry, 3)
-        # self.H_huckel = self._extended_huckel()
+        self.T = Matrix(self.geometry, 1)       # kinetic energy
+        self.V = Matrix(self.geometry, 2)       # nuclear attraction
+        self.Rep = Matrix(self.geometry, 3)     # electron repulsion (mu nu | lambda sigma)
         self.H_core = self.T.matrix + self.V.matrix
-        self.D = self._density(self.H_core)
+        self._H_huckel = None                   # built on demand (see H_huckel)
+
+        # Builds D, J, K and F from the chosen guess.
+        self.set_initial_guess(initial_guess)
+
+    @property
+    def H_huckel(self):
+        """
+        Extended Huckel Hamiltonian. Computed the first time it is needed
+        (and cached), so that an element without Vsip parameters does not
+        break calculations that use the core-Hamiltonian guess.
+        """
+        if self._H_huckel is None:
+            self._H_huckel = self._extended_huckel()
+        return self._H_huckel
+
+    @classmethod
+    def _normalize_guess(cls, initial_guess):
+        """Maps the user's spelling ('Core', 'extended-huckel', ...) to 'core' or 'huckel'."""
+        key = str(initial_guess).strip().lower().replace('-', '_').replace(' ', '_')
+        if key not in cls.GUESS_ALIASES:
+            raise ValueError(
+                f"Unknown initial guess '{initial_guess}'. Use 'core' (core Hamiltonian) or 'huckel' (extended Huckel).")
+        return cls.GUESS_ALIASES[key]
+
+    def set_initial_guess(self, initial_guess):
+        """
+        Selects the initial density guess and rebuilds D, J, K and F from it.
+
+        The integrals are not recomputed, so a second SCF with a different
+        guess is cheap:
+            scf = Scf(mol, initial_guess='core'); scf.scf()
+            scf.set_initial_guess('huckel');      scf.scf()
+
+        Args:
+            initial_guess (str): 'core' or 'huckel'.
+        """
+        guess = self._normalize_guess(initial_guess)
+        H_guess = self.H_core if guess == 'core' else self.H_huckel
+
+        self.initial_guess = guess
+        self.D = self._density(H_guess)
         self.J, self.K = self._coulomb_and_exchange(self.D)
         self.F = self.H_core + 2*self.J - self.K 
 
     def scf(self, max_cond_number = 1e-5, max_iter = 100):
+        """
+        Runs the SCF cycle starting from the current guess density (self.D).
+
+        Args:
+            max_cond_number (float): convergence threshold on the infinity
+                norm of the DIIS orbital gradient (despite the name, it is not
+                a condition number; the name is kept for compatibility).
+            max_iter (int): at most max_iter - 1 iterations are performed.
+
+        Return:
+            [one_electron, two_electron, nuclear_repulsion, kinetic] energies
+            in Eh. The total energy is the sum of the first three; the kinetic
+            energy (fourth) is reported for information only. Raises a RuntimeError
+            if the cycle did not converge.
+        """
         E_nuc = self._nuclear_energy()
         E = [0.0, 0.0]
         D = self.D
 
+        # Canonical orthogonalisation X = U s^(-1/2): drops (near-)linear
+        # dependencies of the basis, so X^T S X = 1.
         s, U = np.linalg.eigh(self.S.matrix)
         s_crit = 1e-5
         s_mask = s > s_crit
@@ -684,42 +946,56 @@ class Scf:
         U = U[:, s_mask]
         X = U*(1/np.sqrt(s))
 
+        # DIIS history: last Fock matrices and their orbital gradients.
         F_hist = []
         G_hist = []
 
+        G_max = float('inf')
+        
         for i in range(1, max_iter):
+            # Fock matrix from the current density.
             J, K = self._coulomb_and_exchange(D)
             F = self.H_core + 2*J - K
 
+            # Energy pieces: E_el = sum D (H_core + F) = 2 sum D H_core + sum D (2J - K).
             # E_elec = np.sum(D*(self.H_core + F))
             One_elec = 2 * np.sum(D*(self.H_core))
             Two_elec = np.sum(D*(F - self.H_core))
             
+            # Orbital gradient. FDS - SDF = FDS - (FDS)^T, transformed to the
+            # orthonormal basis; it vanishes only at self-consistency.
             Fds = F @ D @ self.S.matrix
             error = Fds - Fds.T
             G = X.T @ error @ X
             G_max = np.max(np.abs(G))
 
             if G_max < max_cond_number:
+                # Converged: store the final matrices and report.
                 Kin = 2*np.sum(D*self.T.matrix)
                 self.J, self.K, self.D, self.F = J, K, D, F
                 if self.geometry.charge == 0:
                     print(f"----------------- For {splitext(basename(self.geometry.path_coord))[0]} molecule -----------------")
                 else:
                     print(f"----------------- For {splitext(basename(self.geometry.path_coord))[0]}{self.geometry.charge}+ molecule -----------------")
+                print(f"Initial guess: {self.GUESS_LABELS[self.initial_guess]}")
                 print("Total SCF energy:", One_elec.item() + Two_elec.item() + E_nuc, "\nOne-electron energy:", One_elec.item(), "\nTwo-electron energy:", Two_elec.item(), "\nNuclear repulsion energy:", E_nuc, "\nKinetic energy:", Kin, "\nConvergence after", i, "iterations")
                 mulliken = self._mulliken_charges()
                 return [One_elec.item(), Two_elec.item(), E_nuc, Kin]
             
+            # Keep only the 7 most recent (F, G) pairs.
             F_hist.append(F)
             G_hist.append(G)
             if len(F_hist) > 7:
                 F_hist.pop(0)
                 G_hist.pop(0)
 
+            # DIIS extrapolation (needs at least two stored iterations).
             F_diis = F
             if len(F_hist) > 1:
                 dim = len(F_hist)
+
+                # Linear system for the mixing coefficients c_I:
+                #   sum_J <G_I|G_J> c_J - lambda = 0   and   sum_I c_I = 1
                 B = np.zeros((dim + 1, dim + 1))
 
                 for a in range(dim):
@@ -737,16 +1013,25 @@ class Scf:
                 
                 try:
                     c = np.linalg.solve(B, rhs)
+                    # Extrapolated Fock matrix: F' = sum_I c_I F_I.
+                    # (It is NOT added to the history, only the raw F is.)
                     F_diis = np.zeros_like(F)
                     for idx in range(dim):
                         F_diis += c[idx] * F_hist[idx]
                 except np.linalg.LinAlgError:
+                    # Singular DIIS matrix: fall back to the plain Fock matrix.
                     pass
             
+            # New density from the (extrapolated) Fock matrix.
             D = self._density(F_diis)
-        return 404
+        raise RuntimeError(f"SCF did not converge in {max_iter - 1} iterations (max |G| = {G_max:.2e})")
 
     def _mulliken_charges(self):
+        """
+        Prints the Mulliken gross orbital populations q_mu = 2 sum_nu D_mu,nu S_mu,nu,
+        grouped by atom, with each atom's total electronic and net charge
+        (net = Z - electrons). Output only; returns 0.
+        """
         charge_density = np.sum(2*self.D * self.S.matrix, axis=1)
         center_j = None
         electronic_charge = 0.0
@@ -756,6 +1041,7 @@ class Scf:
             center_i = [basis_function['center']['Ax'], basis_function['center']['Ay'], basis_function['center']['Az']]
             symbol = basis_function['symbol']
 
+            # A new centre starts: close the previous atom's block first.
             if center_j != center_i:
                 if center_j is not None:
                     charge = self.geometry.atomic_number[current_symbol] - electronic_charge
@@ -767,9 +1053,10 @@ class Scf:
                 print(current_symbol)
 
             q_mu = charge_density[mu]
-            print(f'l={basis_function['l']} m={basis_function['m']} n={basis_function['n']}: {q_mu:.4f}')
+            print(f"l={basis_function['l']} m={basis_function['m']} n={basis_function['n']}: {q_mu:.4f}")
             electronic_charge += q_mu
 
+        # Close the block of the last atom.
         if center_j is not None:
             charge = self.geometry.atomic_number[basis_function['symbol']] - electronic_charge
             print(f"Total Electronic Charge = {electronic_charge:.4f} \nTotal Charge = {charge:.4f} \n")
@@ -777,6 +1064,7 @@ class Scf:
         return 0
 
     def _nuclear_energy(self):
+        """Nuclear repulsion energy: sum over atom pairs of Z_a Z_b / R_ab (Eh, Bohr)."""
         atoms = self.geometry.atom_list
         E_nuc = 0.0
 
@@ -795,16 +1083,30 @@ class Scf:
         return E_nuc
     
     def _extended_huckel(self):
+        """
+        Extended Huckel Hamiltonian with the Wolfsberg-Helmholtz formula
+            H_ii = VSIP(element, shell)
+            H_ij = K S_ij (H_ii + H_jj) / 2,     K = 1.75
+        Raises ValueError if a basis function has no entry in Vsip (use the
+        'core' guess in that case).
+        """
         dimension = len(self.basis)
         K = 1.75
         H_eht = np.zeros((dimension, dimension))
        
-        
+        # Diagonal: ionisation potential of the function's element and shell type.
         for i in range(dimension):
             symbol = self.basis[i]['symbol']
             l, m, n = self.basis[i]['l'], self.basis[i]['m'], self.basis[i]['n']
-            H_eht[i,i] = self.Vsip[symbol][self._orbital_type(l,m,n)]
+            orbital = self._orbital_type(l, m, n)
+            try:
+                H_eht[i,i] = self.Vsip[symbol][orbital]
+            except KeyError:
+                raise ValueError(
+                    f"No extended Huckel parameter (Vsip) for {symbol} '{orbital}' functions. "
+                    f"Use initial_guess='core' or add the parameter to Scf.Vsip.") from None
 
+        # Off-diagonal: proportional to the overlap.
         for i in range(dimension):
             for j in range(i, dimension):
                 H_eht[i,j] = K*self.S.matrix[i,j]*(H_eht[i,i] + H_eht[j,j])/2
@@ -813,6 +1115,14 @@ class Scf:
         return H_eht
     
     def _density(self, H):
+        """
+        Density matrix D = C_occ C_occ^T from the lowest N/2 eigenvectors of
+        the generalised problem H C = S C eps (any symmetric H: a guess
+        Hamiltonian, or the Fock matrix inside the SCF loop).
+
+        Solved by canonical orthogonalisation: X = U s^(-1/2) with eigenvalues
+        s <= 1e-5 of S discarded, diagonalise X^T H X, back-transform C = X C'.
+        """
         s, U = np.linalg.eigh(self.S.matrix)
         s_crit = 1e-5
         s_mask = s > s_crit
@@ -823,6 +1133,7 @@ class Scf:
         eigenvalues, C = np.linalg.eigh(H_ortho)
         Coeff = X @ C
 
+        # Aufbau: the N/2 lowest orbitals are doubly occupied.
         N_i = self.geometry.n_electrons // 2
         C_occupied = Coeff[:, :N_i]
         D = C_occupied @ C_occupied.conj().T
@@ -830,12 +1141,17 @@ class Scf:
         return D
     
     def _coulomb_and_exchange(self, D):
+        """
+        Coulomb and exchange matrices from the density D:
+            J_pq = sum_rs (pq|rs) D_rs        K_pq = sum_rs (ps|rq) D_rs
+        """
         J = np.einsum('pqrs,rs->pq', self.Rep.matrix, D, optimize=True)
         K = np.einsum('psrq,rs->pq', self.Rep.matrix, D, optimize=True)
         
         return J, K
         
     def _orbital_type(self, l, m, n):
+        """Shell letter from the total angular momentum l+m+n (0 -> s, 1 -> p, 2 -> d, 3 -> f; otherwise None)."""
         numbers = l + m + n
         if numbers == 0:
             return 's'
@@ -859,6 +1175,7 @@ class ResultP:
         Args:
             value (float): the radial part of p-orbital already calculated.
             x, y, z (float): coordinates of evaluation point.
+            Ax, Ay, Az (float): coordinates of the orbital center.
         """
         self.value = value
         self.dx = x - Ax
@@ -885,7 +1202,16 @@ class ResultP:
 
 class ResultD_Spherical:
     """
-    Calculates the 5 Spherical d-orbitals: xx, yy, zz, xy, xz, yz.
+    Calculates the 5 real spherical d-orbitals: z2, xz, yz, x2_y2, xy.
+
+    This is the Cartesian -> spherical combination of the d shell, written in
+    terms of the Cartesian monomials (dx, dy, dz = coordinates relative to the centre):
+        z2    = zz - 1/2 (xx + yy)
+        xz    = sqrt(3) xz            yz = sqrt(3) yz
+        x2_y2 = sqrt(3)/2 (xx - yy)   xy = sqrt(3) xy
+    Basis.d returns this class when the basis file is not marked "cartesian".
+    It evaluates orbitals at a point in space; the integral matrices used by
+    the SCF (class Matrix) are built from the 6 Cartesian d functions.
     """
 
     def __init__(self, value, x, y, z, Ax, Ay, Az):
